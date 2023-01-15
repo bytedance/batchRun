@@ -1,0 +1,21 @@
+#!/bin/expect
+
+set timeout 1
+set host [lindex $argv 0]
+set password [exec BATCH_RUN_INSTALL_PATH/tools/get_password -H $host]
+
+if { $argc > 1 } {
+    set port [lindex $argv 1]
+} else {
+    set port 22
+}
+
+# ssh.
+spawn ssh -XY -o StrictHostKeyChecking=no -p $port $host
+
+expect {
+    "yes/no" {send "yes\r";exp_continue}
+    "assword:" {send "$password\r"}
+}
+
+interact
