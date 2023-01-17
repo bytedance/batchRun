@@ -147,7 +147,7 @@ HOST_LIST = '""" + str(host_list) + """'
 LOG_DIR = '""" + str(CWD) + """/data/log'
 
 # Default ssh command.
-DEFAULT_SSH_COMMAND = "ssh -XY -o StrictHostKeyChecking=no"
+DEFAULT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=no"
 
 # Support host_ip fuzzy matching, could be "True" or "False".
 FUZZY_MATCH = True

@@ -1,17 +1,19 @@
-Version 1.0 (2022.12)
+Version 1.0 (2023.1)
 
 
 0. What is batchRun?
 ========
-Just like pssh/anssible, batchRun is used to run 
-commands on multi-hosts.
+batchRun is an ansible-similar IT automation system, which 
+is more suitable for IC industry.
 
 
 1. Python dependency:
 ========
-Need python3.8, suggest Anaconda3-2021.05-Linux-x86_64.sh.
+Need python3.8, Anaconda3-2021.05-Linux-x86_64.sh is better.
 Need python library "Crypto", you can install it with
-command "pip install pycryptodome"
+
+    pip install pycryptodome
+
 Other python library dependency is under requirements.txt.
 
 
@@ -19,18 +21,19 @@ Other python library dependency is under requirements.txt.
 ========
 Copy batchRun into install directory.
 Execute below command to install batchRun.
+
     python3 install.py
 
 
 3. Configuration
 ========
   * Basic configuration
-    config/config.py, basic configuration.
+    config/config.py : basic configuration.
 
   * Host informaiton
-    config/host.list, save the host and host_group 
+    config/host.list : save the host and host_group 
     information.
 
   * Encrypted user&password information
-    config/password.encrypted, generate it with tool
-    tools/save_password.
+    config/password.encrypted : save encrypted user/password 
+    information, generate it with tool tools/save_password.

@@ -6,6 +6,9 @@ import subprocess
 sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/config')
 import config
 
+sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/common')
+import common_lsf
+
 
 def print_error(message):
     """
@@ -262,14 +265,94 @@ class ParseHostList():
         return(group_host_dic)
 
 
-def parse_specified_groups(specified_group_list, host_list_class=None, excluded_host_list=[]):
+def get_host_ip(host, host_list_class=None):
+    if is_ip(host):
+        return(host)
+    else:
+        if not host_list_class:
+            host_list_class = ParseHostList()
+
+        for group in host_list_class.expanded_host_list_dic.keys():
+            for host_ip in host_list_class.expanded_host_list_dic[group].keys():
+                if 'host_name' in host_list_class.expanded_host_list_dic[group][host_ip].keys():
+                    if host_list_class.expanded_host_list_dic[group][host_ip]['host_name'] == host:
+                        return(host_ip)
+
+    return(None)
+
+
+def get_host_name(host, host_list_class=None):
+    if not is_ip(host):
+        return(host)
+    else:
+        if not host_list_class:
+            host_list_class = ParseHostList()
+
+        for group in host_list_class.expanded_host_list_dic.keys():
+            for host_ip in host_list_class.expanded_host_list_dic[group].keys():
+                if host_ip == host:
+                    if 'host_name' in host_list_class.expanded_host_list_dic[group][host_ip].keys():
+                        return(host_list_class.expanded_host_list_dic[group][host_ip]['host_name'])
+
+    return(None)
+
+
+def check_exclusion(host, excluded_host_list, host_list_class=None):
     if not host_list_class:
         host_list_class = ParseHostList()
 
+    if host in excluded_host_list:
+        return(True)
+    else:
+        if is_ip(host):
+            for excluded_host in excluded_host_list:
+                if not is_ip(excluded_host):
+                    excluded_host_ip = get_host_ip(excluded_host, host_list_class)
+
+                    if excluded_host_ip == host:
+                        return(True)
+        else:
+            for excluded_host in excluded_host_list:
+                if is_ip(excluded_host):
+                    excluded_host_name = get_host_name(excluded_host, host_list_class)
+
+                    if excluded_host_name == host:
+                        return(True)
+
+    return(False)
+
+
+def check_repetitiveness(host, specified_host_dic):
+    if host in specified_host_dic.keys():
+        print_warning('*Waring*: host "' + str(host) + '" is specified repeatedly.')
+        return(True)
+    else:
+        if is_ip(host):
+            for specified_host in specified_host_dic.keys():
+                if not is_ip(specified_host):
+                    if 'host_ip' in specified_host_dic[specified_host].keys():
+                        if specified_host_dic[specified_host]['host_ip'] == host:
+                            print_warning('*Waring*: host "' + str(host) + '" is specified repeatedly.')
+                            return(True)
+        else:
+            for specified_host in specified_host_dic.keys():
+                if is_ip(specified_host):
+                    if 'host_name' in specified_host_dic[specified_host].keys():
+                        if specified_host_dic[specified_host]['host_name'] == host:
+                            print_warning('*Waring*: host "' + str(host) + '" is specified repeatedly.')
+                            return(True)
+
+    return(False)
+
+
+def parse_specified_groups(specified_group_list, host_list_class=None, specified_host_dic={}, excluded_host_list=[]):
+    if not host_list_class:
+        host_list_class = ParseHostList()
+
+    # Get excluded group list.
     excluded_group_list = []
     expected_group_list = []
 
-    # Get excluded group list.
     for group in specified_group_list:
         if re.match('^~(\S+)$', group):
             my_match = re.match('^~(\S+)$', group)
@@ -294,11 +377,9 @@ def parse_specified_groups(specified_group_list, host_list_class=None, excluded_
                 excluded_host_list.append(host_ip)
 
     # Get specified host dic.
-    specified_host_dic = {}
-
     for group in expected_group_list:
         for host_ip in host_list_class.expanded_host_list_dic[group].keys():
-            if host_ip not in excluded_host_list:
+            if (not check_exclusion(host_ip, excluded_host_list, host_list_class)) and (not check_repetitiveness(host_ip, specified_host_dic)):
                 specified_host_dic[host_ip] = {'host_ip': host_ip}
 
                 if 'host_name' in host_list_class.expanded_host_list_dic[group][host_ip]:
@@ -310,11 +391,9 @@ def parse_specified_groups(specified_group_list, host_list_class=None, excluded_
     return(specified_host_dic, excluded_host_list)
 
 
-def parse_specified_hosts(specified_host_list, host_list_class=None, excluded_host_list=[]):
+def parse_specified_hosts(specified_host_list, host_list_class=None, specified_host_dic={}, excluded_host_list=[]):
     if not host_list_class:
         host_list_class = ParseHostList()
-
-    specified_host_dic = {}
 
     # Get excluded host list.
     for host_string in specified_host_list:
@@ -334,12 +413,15 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, excluded_ho
             my_match = re.match('^(\S+):(\d+)$', host_string)
             host = my_match.group(1)
             ssh_port = my_match.group(2)
-        else:
+        elif re.match('^(\S+)$', host_string):
             host = host_string
             ssh_port = None
+        else:
+            print_error('*Error*: "' + str(host_string) + '": Invalid host format.')
+            sys.exit(1)
 
         # Don't process repeated specified host.
-        if (host not in specified_host_dic) and (host not in excluded_host_list):
+        if (not check_exclusion(host, excluded_host_list, host_list_class)) and (not check_repetitiveness(host, specified_host_dic)):
             if host in host_list_class.host_ip_dic:
                 # If specify a known host_ip.
                 specified_host_dic[host] = host_list_class.host_ip_dic[host]
@@ -432,5 +514,58 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, excluded_ho
 
                     if ssh_port:
                         specified_host_dic[host]['ssh_port'] = ssh_port
+
+    return(specified_host_dic, excluded_host_list)
+
+
+def parse_specified_lsf_queues(specified_lsf_queue_list, host_list_class=None, queue_host_dic={}, specified_host_dic={}, excluded_host_list=[]):
+    if not host_list_class:
+        host_list_class = ParseHostList()
+
+    if not queue_host_dic:
+        queue_host_dic = common_lsf.get_queue_host_info()
+
+    # Get excluded lsf queue list.
+    excluded_queue_list = []
+    expected_queue_list = []
+
+    for queue in specified_lsf_queue_list:
+        if re.match('^~(\S+)$', queue):
+            my_match = re.match('^~(\S+)$', queue)
+            excluded_queue = my_match.group(1)
+
+            if excluded_queue not in queue_host_dic.keys():
+                print_error('*Error*: ' + str(excluded_queue) + ': Invalid LSF queue.')
+                sys.exit(1)
+            else:
+                excluded_queue_list.append(excluded_queue)
+        else:
+            if queue not in queue_host_dic.keys():
+                print_error('*Error*: ' + str(queue) + ': Invalid LSF queue.')
+                sys.exit(1)
+            else:
+                expected_queue_list.append(queue)
+
+    # Get exclued host list.
+    for queue in excluded_queue_list:
+        for host in queue_host_dic[queue]:
+            if host not in excluded_host_list:
+                excluded_host_list.append(host)
+
+    # Get specified host dic.
+    for queue in expected_queue_list:
+        for host_name in queue_host_dic[queue]:
+            if (not check_exclusion(host_name, excluded_host_list, host_list_class)) and (not check_repetitiveness(host_name, specified_host_dic)):
+                specified_host_dic[host_name] = {'host_name': host_name}
+                host_ip = get_host_ip(host_name)
+
+                if host_ip:
+                    specified_host_dic[host_name]['host_ip'] = host_ip
+
+                    for group in host_list_class.expanded_host_list_dic.keys():
+                        for ip in host_list_class.expanded_host_list_dic[group].keys():
+                            if ip == host_ip:
+                                if 'ssh_port' in host_list_class.expanded_host_list_dic[group][host_ip]:
+                                    specified_host_dic[host_name]['ssh_port'] = host_list_class.expanded_host_list_dic[group][host_ip]['ssh_port']
 
     return(specified_host_dic, excluded_host_list)

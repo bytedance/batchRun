@@ -19,6 +19,7 @@ import config
 
 sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/common')
 import common
+import common_lsf
 import common_password
 
 os.environ['PYTHONUNBUFFERED'] = '1'
@@ -45,6 +46,12 @@ def read_args(host_list_class):
                         help='Specify host group(s) which are on ' + str(config.HOST_LIST) + '''.
 "ALL" means all groups on ''' + str(config.HOST_LIST) + '''.
 "~<GROUP>" means exclud the specified group.''')
+    parser.add_argument('-lsf_queues', '--lsf_queues',
+                        nargs='+',
+                        default=[],
+                        help='Get host list based on LSF queues.' + '''
+"ALL" means all LSF hosts.
+"~<QUEUE>" means exclud the specified queue.''')
     parser.add_argument('-P', '--parallel',
                         action='store_true',
                         default=False,
@@ -90,7 +97,7 @@ def read_args(host_list_class):
         list_hosts(host_list_class, args.list_hosts)
 
     # Get hosts.
-    specified_host_dic = get_specified_hosts(host_list_class, args.hosts, args.host_groups)
+    specified_host_dic = get_specified_hosts(host_list_class, args.hosts, args.host_groups, args.lsf_queues)
 
     # Get password.
     args.password = get_user_password(args.user, args.password)
@@ -133,13 +140,13 @@ def list_hosts(host_list_class, show_group_list):
     sys.exit(0)
 
 
-def get_specified_hosts(host_list_class, specified_host_list, specified_host_group_list):
+def get_specified_hosts(host_list_class, specified_host_list, specified_host_group_list, specified_lsf_queue_list):
     specified_host_dic = {}
 
-    if specified_host_list or specified_host_group_list:
+    if specified_host_list or specified_host_group_list or specified_lsf_queue_list:
         excluded_host_list = []
 
-        # If host_groups is specified, parse and save.
+        # If groups are specified, parse and save.
         if specified_host_group_list:
             if 'ALL' in specified_host_group_list:
                 specified_host_group_list.remove('ALL')
@@ -148,9 +155,9 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
                     if group not in specified_host_group_list:
                         specified_host_group_list.append(group)
 
-            (specified_host_dic, excluded_host_list) = common.parse_specified_groups(specified_host_group_list, host_list_class, excluded_host_list)
+            (specified_host_dic, excluded_host_list) = common.parse_specified_groups(specified_host_group_list, host_list_class, specified_host_dic, excluded_host_list)
 
-        # If hosts is specified, parse and save.
+        # If hosts are specified, parse and save.
         if specified_host_list:
             if 'ALL' in specified_host_list:
                 specified_host_list.remove('ALL')
@@ -159,33 +166,26 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
                     if host not in specified_host_list:
                         specified_host_list.append(host)
 
-            (host_dic, excluded_host_list) = common.parse_specified_hosts(specified_host_list, host_list_class, excluded_host_list)
+            (specified_host_dic, excluded_host_list) = common.parse_specified_hosts(specified_host_list, host_list_class, specified_host_dic, excluded_host_list)
 
-            for host in host_dic.keys():
-                if host in specified_host_dic:
-                    # Host (host_ip) is repeated.
-                    common.print_warning('*Waring*: host "' + str(host) + '" is specified repeatedly.')
-                    continue
-                else:
-                    # Host (host_name) is repeated.
-                    continue_mark = False
+        # If LSF queues are specified, parse and save.
+        if specified_lsf_queue_list:
+            queue_host_dic = common_lsf.get_queue_host_info()
 
-                    for host_ip in specified_host_dic.keys():
-                        if ('host_name' in specified_host_dic[host_ip]) and (specified_host_dic[host_ip]['host_name'] == host):
-                            common.print_warning('*Waring*: host "' + str(host) + '(' + str(host_ip) + ')" is specified repeatedly.')
-                            continue_mark = True
-                            break
+            if 'ALL' in specified_lsf_queue_list:
+                specified_lsf_queue_list.remove('ALL')
 
-                    if continue_mark:
-                        continue
+                for queue in queue_host_dic.keys():
+                    if queue not in specified_lsf_queue_list:
+                        specified_lsf_queue_list.append(queue)
 
-                specified_host_dic[host] = host_dic[host]
+            (specified_host_dic, excluded_host_list) = common.parse_specified_lsf_queues(specified_lsf_queue_list, host_list_class, queue_host_dic, specified_host_dic, excluded_host_list)
 
         # Remove excluded hosts.
         remove_host_list = []
 
         for host in specified_host_dic.keys():
-            if (host in excluded_host_list) or (('host_name' in specified_host_dic[host]) and (specified_host_dic[host]['host_name'] in excluded_host_list)):
+            if (host in excluded_host_list) or (('host_ip' in specified_host_dic[host]) and (specified_host_dic[host]['host_ip'] in excluded_host_list)) or (('host_name' in specified_host_dic[host]) and (specified_host_dic[host]['host_name'] in excluded_host_list)):
                 remove_host_list.append(host)
 
         for host in remove_host_list:
