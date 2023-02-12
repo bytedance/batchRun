@@ -109,7 +109,7 @@ def read_args(host_list_class):
     if args.parallel and (args.output_message_level == 3):
         args.output_message_level = 1
 
-    return(specified_host_dic, args.parallel, args.user, args.password, commands, args.timeout, args.output_message_level)
+    return (specified_host_dic, args.parallel, args.user, args.password, commands, args.timeout, args.output_message_level)
 
 
 def list_hosts(host_list_class, show_group_list):
@@ -195,7 +195,7 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
     if not specified_host_dic:
         common.print_warning('*Warning*: No valid host or host group is specified.')
 
-    return(specified_host_dic)
+    return (specified_host_dic)
 
 
 def get_user_password(user, password):
@@ -205,7 +205,7 @@ def get_user_password(user, password):
         if not password:
             common.print_warning('*Warning*: user password is not specified!')
 
-    return(password)
+    return (password)
 
 
 def get_command_info(command, multi_commands_file):
@@ -239,7 +239,7 @@ def get_command_info(command, multi_commands_file):
 
         with open(multi_commands_file, 'r') as MC:
             for line in MC.readlines():
-                if re.match('^\s*$', line) or re.match('^\s*#.*$', line):
+                if re.match(r'^\s*$', line) or re.match(r'^\s*#.*$', line):
                     continue
                 else:
                     commands.append(line.strip())
@@ -249,7 +249,7 @@ def get_command_info(command, multi_commands_file):
         common.print_error('*Error*: No valid command is specified!')
         sys.exit(1)
 
-    return(commands)
+    return (commands)
 
 
 class BatchRun():
@@ -308,7 +308,7 @@ class BatchRun():
         else:
             ssh_command = str(ssh_command) + ' ' + str(host)
 
-        return(ssh_command)
+        return (ssh_command)
 
     def execute_ssh_command(self, host):
         # Save log

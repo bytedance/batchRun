@@ -35,7 +35,7 @@ def read_args():
 
     args = parser.parse_args()
 
-    return(args.ssh_command, args.host, args.password, args.timeout)
+    return (args.ssh_command, args.host, args.password, args.timeout)
 
 
 def ssh_run(ssh_command, host, password, timeout):
@@ -70,6 +70,7 @@ def ssh_run(ssh_command, host, password, timeout):
 def main():
     (ssh_command, host, password, timeout) = read_args()
     ssh_run(ssh_command, host, password, timeout)
+
 
 if __name__ == '__main__':
     main()

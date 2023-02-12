@@ -40,7 +40,7 @@ def read_args():
 
     args = parser.parse_args()
 
-    return(args.password_file, args.user, args.password, args.host)
+    return (args.password_file, args.user, args.password, args.host)
 
 
 class SavePassword():
@@ -56,10 +56,10 @@ class SavePassword():
         if os.path.exists(self.password_file):
             with open(self.password_file, 'r') as PF:
                 for line in PF.readlines():
-                    if re.match('^\s*$', line) or re.match('^\s*#.*$', line):
+                    if re.match(r'^\s*$', line) or re.match(r'^\s*#.*$', line):
                         continue
-                    elif re.match('^\s*(\S+?)\s+(\S+)\s*(\S+)?\s*$', line):
-                        my_match = re.match('^\s*(\S+?)\s+(\S+)\s*(\S+)?\s*$', line)
+                    elif re.match(r'^\s*(\S+?)\s+(\S+)\s*(\S+)?\s*$', line):
+                        my_match = re.match(r'^\s*(\S+?)\s+(\S+)\s*(\S+)?\s*$', line)
                         user = my_match.group(1)
                         password = my_match.group(2)
                         host = my_match.group(3)

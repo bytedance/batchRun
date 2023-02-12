@@ -32,7 +32,7 @@ def arg_parse():
         print('Usage: xssh host <port>')
         sys.exit(1)
 
-    return(host, port)
+    return (host, port)
 
 
 def get_valid_host_and_port(input_host, input_port):
@@ -80,7 +80,7 @@ def get_valid_host_and_port(input_host, input_port):
     if not valid_port:
         valid_port = 22
 
-    return(valid_host, valid_port)
+    return (valid_host, valid_port)
 
 
 def execute_ssh(host, port):

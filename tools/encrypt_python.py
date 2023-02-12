@@ -28,7 +28,7 @@ def read_args():
 
     args = parser.parse_args()
 
-    return(args.python_files)
+    return (args.python_files)
 
 
 def gen_setup_file(python_files):
@@ -54,7 +54,7 @@ def gen_setup_file(python_files):
         print('*Error*: Failed on open setup file "' + str(setup_file) + '" for write, ' + str(error))
         sys.exit(1)
 
-    return(setup_file)
+    return (setup_file)
 
 
 def execute_setup_file(setup_file):
@@ -67,7 +67,7 @@ def execute_setup_file(setup_file):
 
 
 def cleanup_directory(python_files, setup_file):
-    setup_file_name = re.sub('.*/', '', setup_file)
+    setup_file_name = re.sub(r'.*/', '', setup_file)
     for file_name in os.listdir(os.getcwd()):
         if file_name == setup_file_name:
             command = 'rm -rf ' + str(setup_file)
@@ -77,20 +77,20 @@ def cleanup_directory(python_files, setup_file):
             command = 'rm -rf ' + str(file_name)
             print('    ' + str(command))
             os.system(command)
-        elif re.match('^.*\.c$', file_name):
+        elif re.match(r'^.*\.c$', file_name):
             for python_file in python_files:
-                python_file_name = re.sub('\.py', '', python_file)
+                python_file_name = re.sub(r'\.py', '', python_file)
 
-                if re.match('^' + str(python_file_name) + '\.c$', file_name):
+                if re.match(r'^' + str(python_file_name) + r'\.c$', file_name):
                     command = 'rm -rf ' + str(file_name)
                     print('    ' + str(command))
                     os.system(command)
                     break
-        elif re.match('^.*\.so$', file_name):
+        elif re.match(r'^.*\.so$', file_name):
             for python_file in python_files:
-                python_file_name = re.sub('\.py', '', python_file)
+                python_file_name = re.sub(r'\.py', '', python_file)
 
-                if re.match('^' + str(python_file_name) + '.*\.so$', file_name):
+                if re.match(r'^' + str(python_file_name) + r'.*\.so$', file_name):
                     command = 'mv ' + str(file_name) + ' ' + str(python_file_name) + '.so'
                     print('    ' + str(command))
                     os.system(command)

@@ -39,7 +39,7 @@ def read_args():
         print('*Error*: ' + str(args.password_file) + ': No such file.')
         sys.exit(1)
 
-    return(args.password_file, args.user, args.host)
+    return (args.password_file, args.user, args.host)
 
 
 ################
