@@ -1,11 +1,14 @@
 #### Format ####
 # # Description
-# [group_name]
-# ip1 
-# ip2  <port2>
-# ip3 <hostname3>
-# ip4 <hostname4> <port4>
-# sub_group
+# # [group_name]
+# # ip1 
+# # ip2 <port2>
+# # ip3 <hostname3>
+# # ip4 <hostname4> <port4>
+# # sub_group5
+# # ~ip6
+# # ~hostname7
+# # ~sub_group8
 ################
 
 
