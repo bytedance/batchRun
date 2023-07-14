@@ -97,7 +97,7 @@ def gen_shell_tools():
     """
     Generate shell scripts under <BATCH_RUN_INSTALL_PATH>/tools.
     """
-    tool_list = ['encrypt_python', 'get_password', 'save_password', 'xssh']
+    tool_list = ['encrypt_python', 'get_password', 'patch', 'save_password', 'switch_etc_hosts', 'xssh']
 
     for tool_name in tool_list:
         tool = str(CWD) + '/tools/' + str(tool_name)

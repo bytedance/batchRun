@@ -1,4 +1,3 @@
-#!/bin/env python3
 # -*- coding: utf-8 -*-
 ################################
 # File Name   : encrypt_python.py
@@ -28,7 +27,7 @@ def read_args():
 
     args = parser.parse_args()
 
-    return (args.python_files)
+    return args.python_files
 
 
 def gen_setup_file(python_files):
@@ -54,7 +53,7 @@ def gen_setup_file(python_files):
         print('*Error*: Failed on open setup file "' + str(setup_file) + '" for write, ' + str(error))
         sys.exit(1)
 
-    return (setup_file)
+    return setup_file
 
 
 def execute_setup_file(setup_file):

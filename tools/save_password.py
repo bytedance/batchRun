@@ -1,4 +1,3 @@
-#!/bin/env python3
 # -*- coding: utf-8 -*-
 ################################
 # File Name   : save_password.py

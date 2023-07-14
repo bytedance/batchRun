@@ -1,4 +1,3 @@
-#!/bin/env python3
 # -*- coding: utf-8 -*-
 ################################
 # File Name   : batch_run.py
@@ -18,6 +17,7 @@ sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/config')
 import config
 
 sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/common')
+
 import common
 import common_lsf
 import common_password
@@ -89,8 +89,17 @@ def read_args(host_list_class):
                         help='List all or specified-group hosts on ' + str(config.HOST_LIST) + '''.
 "all" or "ALL" means all hosts on host list file.
 "<group>" means hosts on specified groups.''')
+    parser.add_argument('-v', '--version',
+                        action="store_true",
+                        default=False,
+                        help='Get batch_run version information.')
 
     args = parser.parse_args()
+
+    # Get version.
+    if args.version:
+        print('Version : 1.05')
+        sys.exit(1)
 
     # List hosts
     if args.list_hosts:
@@ -120,22 +129,40 @@ def list_hosts(host_list_class, show_group_list):
             # Show hosts info.
             if 'hosts' in group_dic:
                 for host_ip in group_dic['hosts'].keys():
+                    host_name_list = []
+
                     if 'host_name' in group_dic['hosts'][host_ip]:
-                        host_name = group_dic['hosts'][host_ip]['host_name']
+                        host_name_list = group_dic['hosts'][host_ip]['host_name']
                     else:
-                        host_name = ''
+                        host_name_list = ['',]
 
                     if 'ssh_port' in group_dic['hosts'][host_ip]:
                         ssh_port = group_dic['hosts'][host_ip]['ssh_port']
                     else:
                         ssh_port = ''
 
-                    print('      %-15s    %s    %s' % (host_ip, host_name, ssh_port))
+                    for host_name in host_name_list:
+                        print('        %-15s  %s  %s' % (host_ip, host_name, ssh_port))
 
             # Show sub_groups info.
             if 'sub_groups' in group_dic:
                 for sub_group in group_dic['sub_groups']:
-                    print('      ' + str(sub_group) + '/')
+                    print('        ' + str(sub_group) + '/')
+
+            # Show exclude_hosts info.
+            if 'exclude_hosts' in group_dic:
+                if 'host_ip' in group_dic['exclude_hosts']:
+                    for host_ip in group_dic['exclude_hosts']['host_ip']:
+                        print('        ~%s' % (host_ip))
+
+                if 'host_name' in group_dic['exclude_hosts']:
+                    for host_name in group_dic['exclude_hosts']['host_name']:
+                        print('        ~%s' % (host_name))
+
+            # Show execlude_groups info.
+            if 'exclude_groups' in group_dic:
+                for exclude_group in group_dic['exclude_groups']:
+                    print('        ~' + str(exclude_group) + '/')
 
     sys.exit(0)
 
@@ -144,18 +171,18 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
     specified_host_dic = {}
 
     if specified_host_list or specified_host_group_list or specified_lsf_queue_list:
-        excluded_host_list = []
+        excluded_host_dic = {}
 
         # If groups are specified, parse and save.
         if specified_host_group_list:
             if 'ALL' in specified_host_group_list:
                 specified_host_group_list.remove('ALL')
 
-                for group in host_list_class.group_list:
+                for group in host_list_class.host_list_dic.keys():
                     if group not in specified_host_group_list:
                         specified_host_group_list.append(group)
 
-            (specified_host_dic, excluded_host_list) = common.parse_specified_groups(specified_host_group_list, host_list_class, specified_host_dic, excluded_host_list)
+            (specified_host_dic, excluded_host_dic) = common.parse_specified_groups(specified_host_group_list, host_list_class, specified_host_dic, excluded_host_dic)
 
         # If hosts are specified, parse and save.
         if specified_host_list:
@@ -166,7 +193,7 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
                     if host not in specified_host_list:
                         specified_host_list.append(host)
 
-            (specified_host_dic, excluded_host_list) = common.parse_specified_hosts(specified_host_list, host_list_class, specified_host_dic, excluded_host_list)
+            (specified_host_dic, excluded_host_dic) = common.parse_specified_hosts(specified_host_list, host_list_class, specified_host_dic, excluded_host_dic)
 
         # If LSF queues are specified, parse and save.
         if specified_lsf_queue_list:
@@ -179,23 +206,42 @@ def get_specified_hosts(host_list_class, specified_host_list, specified_host_gro
                     if queue not in specified_lsf_queue_list:
                         specified_lsf_queue_list.append(queue)
 
-            (specified_host_dic, excluded_host_list) = common.parse_specified_lsf_queues(specified_lsf_queue_list, host_list_class, queue_host_dic, specified_host_dic, excluded_host_list)
+            (specified_host_dic, excluded_host_dic) = common.parse_specified_lsf_queues(specified_lsf_queue_list, host_list_class, queue_host_dic, specified_host_dic, excluded_host_dic)
 
         # Remove excluded hosts.
         remove_host_list = []
 
-        for host in specified_host_dic.keys():
-            if (host in excluded_host_list) or (('host_ip' in specified_host_dic[host]) and (specified_host_dic[host]['host_ip'] in excluded_host_list)) or (('host_name' in specified_host_dic[host]) and (specified_host_dic[host]['host_name'] in excluded_host_list)):
-                remove_host_list.append(host)
+        for host in excluded_host_dic.keys():
+            if common.is_ip(host):
+                if host in specified_host_dic.keys():
+                    if 'host_name' in specified_host_dic[host] and 'host_name' in excluded_host_dic[host]:
+                        if len(excluded_host_dic[host]['host_name']) != 0:
+                            diff_host_name = list(set(specified_host_dic[host]['host_name']).difference(set(excluded_host_dic[host]['host_name'])))
 
-        for host in remove_host_list:
-            del specified_host_dic[host]
+                            if len(diff_host_name) == 0:
+                                remove_host_list.append(host)
+                        else:
+                            remove_host_list.append(host)
+            else:
+                if host in specified_host_dic.keys():
+                    remove_host_list.append(host)
+                else:
+                    for specified_host in specified_host_dic:
+                        if 'host_name' in specified_host_dic[specified_host]:
+                            if host in specified_host_dic[specified_host]['host_name']:
+                                specified_host_dic[specified_host]['host_name'].remove(host)
+
+                                if len(specified_host_dic[specified_host]['host_name']) == 0:
+                                    remove_host_list.append(specified_host)
+
+    for host in list(set(remove_host_list)):
+        del specified_host_dic[host]
 
     # specified_host_dic cannot be empty.
     if not specified_host_dic:
         common.print_warning('*Warning*: No valid host or host group is specified.')
 
-    return (specified_host_dic)
+    return specified_host_dic
 
 
 def get_user_password(user, password):
@@ -205,7 +251,7 @@ def get_user_password(user, password):
         if not password:
             common.print_warning('*Warning*: user password is not specified!')
 
-    return (password)
+    return password
 
 
 def get_command_info(command, multi_commands_file):
@@ -249,7 +295,7 @@ def get_command_info(command, multi_commands_file):
         common.print_error('*Error*: No valid command is specified!')
         sys.exit(1)
 
-    return (commands)
+    return commands
 
 
 class BatchRun():
@@ -290,6 +336,9 @@ class BatchRun():
                 print(message)
 
     def get_ssh_command(self, host):
+        host_list = [host, ]
+        ssh_command_list = []
+
         # Default ssh setting.
         if config.DEFAULT_SSH_COMMAND:
             ssh_command = config.DEFAULT_SSH_COMMAND
@@ -299,16 +348,19 @@ class BatchRun():
         if 'ssh_port' in self.specified_host_dic[host]:
             ssh_command = str(ssh_command) + ' -p ' + str(self.specified_host_dic[host]['ssh_port'])
 
-        if ('host_ip' in self.specified_host_dic[host]) and (self.specified_host_dic[host]['host_ip'] != host):
-            host = self.specified_host_dic[host]['host_ip']
+        if ('host_ip' in self.specified_host_dic[host]) and (host not in self.specified_host_dic[host]['host_ip']):
+            host_list = self.specified_host_dic[host]['host_ip']
 
         # Add user setting.
-        if self.user:
-            ssh_command = str(ssh_command) + ' ' + str(self.user) + '@' + str(host)
-        else:
-            ssh_command = str(ssh_command) + ' ' + str(host)
+        for host in host_list:
+            if self.user:
+                ssh_command_run = str(ssh_command) + ' ' + str(self.user) + '@' + str(host)
+                ssh_command_list.append(ssh_command_run)
+            else:
+                ssh_command_run = str(ssh_command) + ' ' + str(host)
+                ssh_command_list.append(ssh_command_run)
 
-        return (ssh_command)
+        return ssh_command_list
 
     def execute_ssh_command(self, host):
         # Save log
@@ -319,39 +371,42 @@ class BatchRun():
         elif self.output_message_level in [1, 3, 4]:
             self.save_log('>>> ' + str(host), [1, 3, 4])
 
-        # Get original ssh command.
-        for (i, command) in enumerate(self.commands):
-            ssh_command = self.get_ssh_command(host)
-            ssh_command = str(ssh_command) + ' ' + str(command)
-            ssh_command = re.sub("'", "\\'", ssh_command)
-            ssh_command = re.sub('"', '\\"', ssh_command)
+            # Get original ssh command.
+            for (i, command) in enumerate(self.commands):
+                ssh_command_list = self.get_ssh_command(host)
 
-            if i != 0:
-                self.save_log('', [4, ])
+                for ssh_command in ssh_command_list:
+                    ssh_command = str(ssh_command) + ' ' + str(command)
+                    ssh_command = re.sub("'", "\\'", ssh_command)
+                    ssh_command = re.sub('"', '\\"', ssh_command)
 
-            # Execute ssh and input password.
-            run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p ' + str(self.password) + ' -t ' + str(self.timeout)
-            encrypted_run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p *** -t ' + str(self.timeout)
-            self.save_log('    ' + str(encrypted_run_ssh_command), [4, ])
-            (return_code, stdout, stderr) = common.run_command(run_ssh_command)
-            stdout_lines = str(stdout, 'utf-8').split('\n')
+                    if i != 0:
+                        self.save_log('', [4, ])
 
-            # Print command output message as expected method.
-            if stdout_lines == ['']:
-                self.save_log('')
-            else:
-                self.save_log('    ==== output ====', [4, ])
+                    # Execute ssh and input password.
+                    run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p ' + str(self.password) + ' -t ' + str(self.timeout)
+                    encrypted_run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p *** -t ' + str(self.timeout)
+                    self.save_log('    ' + str(encrypted_run_ssh_command), [4, ])
+                    (return_code, stdout, stderr) = common.run_command(run_ssh_command)
+                    stdout_lines = str(stdout, 'utf-8').split('\n')
 
-                for stdout_line in stdout_lines:
-                    if stdout_line:
-                        self.save_log('    ' + str(stdout_line), [2, 3, 4])
+                    # Print command output message as expected method.
+                    if stdout_lines == ['']:
+                        self.save_log('')
+                    else:
+                        self.save_log('    ==== output ====', [4, ])
 
-                        if self.output_message_level == 2:
-                            break
+                        for stdout_line in stdout_lines:
+                            if stdout_line:
+                                self.save_log('    ' + str(stdout_line), [2, 3, 4])
 
-                self.save_log('    ================', [4, ])
+                                if self.output_message_level == 2:
+                                    break
+
+                        self.save_log('    ================', [4, ])
 
     def run(self):
+
         if self.parallel:
             thread_list = []
 
