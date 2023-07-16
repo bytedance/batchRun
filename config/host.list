@@ -1,14 +1,13 @@
 #### Format ####
-# # Description
-# # [group_name]
-# # ip1 
-# # ip2 <port2>
-# # ip3 <hostname3>
-# # ip4 <hostname4> <port4>
-# # sub_group5
-# # ~ip6
-# # ~hostname7
-# # ~sub_group8
-################
+## [group]
+## host_ip1 
+## host_ip2 <ssh_port2>
+## host_ip3 <host_name3>
+## host_ip4 <host_name4> <ssh_port4>
+## sub_group5
+## ~host_ip6
+## ~host_name7
+## ~sub_group8
+#################
 
 
