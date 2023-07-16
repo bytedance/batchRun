@@ -1,3 +1,4 @@
+#!/bin/env python3
 # -*- coding: utf-8 -*-
 ################################
 # File Name   : run_ssh_command.py
