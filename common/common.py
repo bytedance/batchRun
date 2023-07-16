@@ -270,7 +270,7 @@ class ParseHostList():
                             if exclude_item not in self.host_list_dic[group]['exclude_hosts']['host_ip']:
                                 self.host_list_dic[group]['exclude_hosts']['host_ip'].append(exclude_item)
                         elif exclude_item in self.host_name_dic:
-                            # If match host_ip.
+                            # If match host_name.
                             self.host_list_dic[group].setdefault('exclude_hosts', {})
                             self.host_list_dic[group]['exclude_hosts'].setdefault('host_name', [])
 
