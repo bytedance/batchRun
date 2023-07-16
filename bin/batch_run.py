@@ -371,39 +371,41 @@ class BatchRun():
         elif self.output_message_level in [1, 3, 4]:
             self.save_log('>>> ' + str(host), [1, 3, 4])
 
-            # Get original ssh command.
-            for (i, command) in enumerate(self.commands):
-                ssh_command_list = self.get_ssh_command(host)
+        # Get original ssh command.
+        for (i, command) in enumerate(self.commands):
+            ssh_command_list = self.get_ssh_command(host)
 
-                for ssh_command in ssh_command_list:
-                    ssh_command = str(ssh_command) + ' ' + str(command)
-                    ssh_command = re.sub("'", "\\'", ssh_command)
-                    ssh_command = re.sub('"', '\\"', ssh_command)
+            for ssh_command in ssh_command_list:
+                ssh_command = str(ssh_command) + ' ' + str(command)
+                ssh_command = re.sub("'", "\\'", ssh_command)
+                ssh_command = re.sub('"', '\\"', ssh_command)
 
-                    if i != 0:
-                        self.save_log('', [4, ])
+                if i != 0:
+                    self.save_log('', [4, ])
 
-                    # Execute ssh and input password.
-                    run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p ' + str(self.password) + ' -t ' + str(self.timeout)
-                    encrypted_run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p *** -t ' + str(self.timeout)
-                    self.save_log('    ' + str(encrypted_run_ssh_command), [4, ])
-                    (return_code, stdout, stderr) = common.run_command(run_ssh_command)
-                    stdout_lines = str(stdout, 'utf-8').split('\n')
+                # Execute ssh and input password.
+                run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p ' + str(self.password) + ' -t ' + str(self.timeout)
+                encrypted_run_ssh_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/run_ssh_command.py -c "' + str(ssh_command) + '" -H ' + str(host) + ' -p *** -t ' + str(self.timeout)
 
-                    # Print command output message as expected method.
-                    if stdout_lines == ['']:
-                        self.save_log('')
-                    else:
-                        self.save_log('    ==== output ====', [4, ])
+                self.save_log('    ' + str(encrypted_run_ssh_command), [4, ])
 
-                        for stdout_line in stdout_lines:
-                            if stdout_line:
-                                self.save_log('    ' + str(stdout_line), [2, 3, 4])
+                (return_code, stdout, stderr) = common.run_command(run_ssh_command)
+                stdout_lines = str(stdout, 'utf-8').split('\n')
 
-                                if self.output_message_level == 2:
-                                    break
+                # Print command output message as expected method.
+                if stdout_lines == ['']:
+                    self.save_log('')
+                else:
+                    self.save_log('    ==== output ====', [4, ])
 
-                        self.save_log('    ================', [4, ])
+                    for stdout_line in stdout_lines:
+                        if stdout_line:
+                            self.save_log('    ' + str(stdout_line), [2, 3, 4])
+
+                            if self.output_message_level == 2:
+                                break
+
+                    self.save_log('    ================', [4, ])
 
     def run(self):
 
