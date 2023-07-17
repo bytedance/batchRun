@@ -35,14 +35,31 @@ def arg_parse():
 
 
 def get_valid_host_and_port(input_host, input_port):
-    valid_host_dic = {}
-    (specified_host_dic, excluded_host_list) = common.parse_specified_hosts([input_host, ])
-    host_list = list(specified_host_dic.keys())
+    # Switch input_host into real host_list.
+    if input_port:
+        (specified_host_dic, excluded_host_list) = common.parse_specified_hosts([str(input_host) + ':' + str(input_port),])
+    else:
+        (specified_host_dic, excluded_host_list) = common.parse_specified_hosts([input_host,])
+
+    host_list = []
+
+    for specified_host in specified_host_dic.keys():
+        if 'host_ip' in specified_host_dic[specified_host].keys():
+            for host_ip in specified_host_dic[specified_host]['host_ip']:
+                if host_ip not in host_list:
+                    host_list.append(host_ip)
+        else:
+            host_list.append(specified_host)
+
+    # Save expected host&port into valid_host and valid_port.
+    valid_host = input_host
+    valid_port = input_port
 
     if len(host_list) == 1:
-        valid_host_dic = specified_host_dic[host_list[0]]
+        valid_host = host_list[0]
     elif len(host_list) > 1:
         # If more than one possible host, choice one.
+        print('')
         print('Below are possible hosts:')
 
         for (i, host) in enumerate(host_list):
@@ -55,26 +72,21 @@ def get_valid_host_and_port(input_host, input_port):
         host_num = int(host_num)
 
         if host_num in range(len(host_list)):
-            valid_host_dic = specified_host_dic[host_list[host_num]]
+            valid_host = host_list[host_num]
+
+    if not input_port:
+        if valid_host in specified_host_dic.keys():
+            if 'ssh_port' in specified_host_dic[valid_host].keys():
+                valid_port = specified_host_dic[valid_host]['ssh_port']
         else:
-            valid_host_dic = {'host_name': input_host}
+            for specified_host in specified_host_dic.keys():
+                if ('host_ip' in specified_host_dic[specified_host].keys()) and ('ssh_port' in specified_host_dic[specified_host].keys()):
+                    for (i, host_ip) in enumerate(specified_host_dic[specified_host]['host_ip']):
+                        if valid_host == host_ip:
+                            ssh_port = specified_host_dic[specified_host]['ssh_port'][i]
 
-    # Get valid host and valid port.
-    valid_host = input_host
-    valid_port = input_port
-
-    if 'host_ip' in valid_host_dic.keys():
-        valid_host = valid_host_dic['host_ip']
-    elif 'host_name' in valid_host_dic:
-        valid_host = valid_host_dic['host_name']
-
-    if 'ssh_port' in valid_host_dic.keys():
-        if valid_port:
-            if valid_host_dic['ssh_port'] != valid_port:
-                common.print_error('*Error*: For host "' + str(valid_host) + '", specified ssh_port "' + str(valid_port) + '" is different with configured ssh_port "' + str(valid_host_dic['ssh_port']) + '".')
-                sys.exit(1)
-        else:
-            valid_port = valid_host_dic['ssh_port']
+                            if ssh_port:
+                                valid_port = ssh_port
 
     if not valid_port:
         valid_port = 22

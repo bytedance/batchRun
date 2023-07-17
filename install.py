@@ -153,7 +153,8 @@ DEFAULT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=no"
 FUZZY_MATCH = True
 
 # Define timeout for ssh command, unit is "second".
-TIMEOUT = 10""")
+TIMEOUT = 10
+""")
 
             os.chmod(config_file, stat.S_IRWXU+stat.S_IRWXG+stat.S_IRWXO)
         except Exception as error:
