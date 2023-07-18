@@ -504,7 +504,7 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
                                     print_error('*Error*: ' + str(host_string) + ': ssh_port setting is conflict with the sign on "' + str(config.HOST_LIST) + '".')
                                     sys.exit(1)
 
-                        specified_host_dic[host] = {}
+                        specified_host_dic.setdefault(host, {})
                         specified_host_dic[host].setdefault('host_ip', [])
                         specified_host_dic[host].setdefault('ssh_port', [])
                         specified_host_dic[host]['host_ip'].append(host_ip)
