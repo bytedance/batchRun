@@ -1,6 +1,5 @@
 import os
 import sys
-import stat
 
 CWD = os.getcwd()
 PYTHON_PATH = os.path.dirname(os.path.abspath(sys.executable))
@@ -87,7 +86,7 @@ done
 python3 $BATCH_RUN_INSTALL_PATH/bin/batch_run.py ${args[*]}
 """)
 
-        os.chmod(batch_run, stat.S_IRWXU+stat.S_IRWXG+stat.S_IRWXO)
+        os.chmod(batch_run, 0o755)
     except Exception as err:
         print('*Error*: Failed on generating script "' + str(batch_run) + '": ' + str(err))
         sys.exit(1)
@@ -97,10 +96,10 @@ def gen_shell_tools():
     """
     Generate shell scripts under <BATCH_RUN_INSTALL_PATH>/tools.
     """
-    tool_list = ['encrypt_python', 'get_password', 'patch', 'save_password', 'switch_etc_hosts', 'xssh']
+    tool_list = ['tools/encrypt_python', 'tools/patch', 'tools/sample_host_info', 'tools/save_password', 'tools/switch_etc_hosts']
 
     for tool_name in tool_list:
-        tool = str(CWD) + '/tools/' + str(tool_name)
+        tool = str(CWD) + '/' + str(tool_name)
 
         print('')
         print('>>> Generate script "' + str(tool) + '".')
@@ -116,9 +115,9 @@ export PATH=""" + str(PYTHON_PATH) + """:$PATH
 export BATCH_RUN_INSTALL_PATH=""" + str(CWD) + """
 
 # Execute """ + str(tool_name) + """.py.
-python3 $BATCH_RUN_INSTALL_PATH/tools/""" + str(tool_name) + '.py $@')
+python3 $BATCH_RUN_INSTALL_PATH/""" + str(tool_name) + '.py $@')
 
-            os.chmod(tool, stat.S_IRWXU+stat.S_IRWXG+stat.S_IRWXO)
+            os.chmod(tool, 0o755)
         except Exception as error:
             print('*Error*: Failed on generating script "' + str(tool) + '": ' + str(error))
             sys.exit(1)
@@ -141,41 +140,25 @@ def gen_config_file():
 
             with open(config_file, 'w') as CF:
                 CF.write("""# Specify host list, default is "host.list" on current configure directory.
-HOST_LIST = '""" + str(host_list) + """'
+host_list = '""" + str(host_list) + """'
 
-# Set log directory.
-LOG_DIR = '""" + str(CWD) + """/data/log'
+# Specify the database directory.
+db_path = '""" + str(CWD) + """/db'
 
 # Default ssh command.
-DEFAULT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=no"
+default_ssh_command = "ssh -o StrictHostKeyChecking=no -t -q"
 
 # Support host_ip fuzzy matching, could be "True" or "False".
-FUZZY_MATCH = True
+fuzzy_match = True
 
 # Define timeout for ssh command, unit is "second".
-TIMEOUT = 10
+timeout = 10
 """)
 
-            os.chmod(config_file, stat.S_IRWXU+stat.S_IRWXG+stat.S_IRWXO)
+            os.chmod(config_file, 0o777)
         except Exception as error:
             print('*Error*: Failed on opening config file "' + str(config_file) + '" for write: ' + str(error))
             sys.exit(1)
-
-
-def replace_vars():
-    """
-    Rplease variables for scripts under <BATCH_RUN_INSTALL_PATH>/tools.
-    """
-    tool_list = ['essh', ]
-
-    for tool_name in tool_list:
-        tool = str(CWD) + '/tools/' + str(tool_name)
-
-        with open(tool, 'r+') as TOOL:
-            lines = TOOL.read()
-            TOOL.seek(0)
-            lines = lines.replace('BATCH_RUN_INSTALL_PATH', CWD)
-            TOOL.write(lines)
 
 
 ################
@@ -187,7 +170,6 @@ def main():
     gen_batch_run()
     gen_shell_tools()
     gen_config_file()
-    replace_vars()
 
     print('')
     print('Done, Please enjoy it.')
