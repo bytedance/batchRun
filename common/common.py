@@ -327,6 +327,19 @@ def get_login_user():
     return login_user
 
 
+def create_dir(dir_path, permission=0o1777):
+    """
+    Create dir with specified permission.
+    """
+    if not os.path.exists(dir_path):
+        try:
+            os.makedirs(dir_path)
+            os.chmod(dir_path, permission)
+        except Exception as error:
+            bprint('Failed on creating directory "' + str(dir_path) + '", ' + str(error), level='Error')
+            sys.exit(1)
+
+
 def run_command(command, mystdin=subprocess.PIPE, mystdout=subprocess.PIPE, mystderr=subprocess.PIPE, show=None):
     """
     Run system command with subprocess.Popen, get returncode/stdout/stderr.

@@ -38,7 +38,7 @@ def gen_setup_file(python_files):
     try:
         with open(setup_file, 'w') as EF:
             EF.write('import os\n')
-            EF.write('from distutils.core import setup\n')
+            EF.write('from setuptools import setup\n')
             EF.write('from Cython.Build import cythonize\n')
             EF.write('\n')
             EF.write('python_files = [')
@@ -47,6 +47,7 @@ def gen_setup_file(python_files):
                 EF.write("'" + str(python_file) + "', ")
 
             EF.write(']\n')
+            EF.write("os.environ['CFLAGS']='-std=c99'\n")
             EF.write('\n')
             EF.write('setup(ext_modules = cythonize(python_files),)\n')
     except Exception as error:

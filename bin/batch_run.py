@@ -12,6 +12,7 @@ import re
 import sys
 import json
 import copy
+import time
 import getpass
 import datetime
 import argparse
@@ -25,6 +26,8 @@ import common
 import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
+VERSION = 'V2.0'
+VERSION_DATE = '2024.10.26'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -40,6 +43,7 @@ def read_args():
                         nargs='+',
                         default=[],
                         help='''Specify host(s) with below format:
+<host_ip_file>
 <host_ip>
 <host_ip>:<ssh_port>
 <host_name>
@@ -53,50 +57,54 @@ def read_args():
                         nargs='+',
                         default=[],
                         help='''Specify host group(s) with below format:
-<GROUP>
-~<GROUP>
+<group_file>
+<group>
+~<group>
 
 "all | ALL" means all groups on ''' + str(config.host_list) + '''.
-"~<GROUP>" means exclud hosts on specified group.''')
+"~<GROUP>" means exclud specified group.''')
     parser.add_argument('-L', '--list',
                         action='store_true',
                         default=False,
-                        help='List specified hosts/groups.')
+                        help='List specified host(s)/group(s).')
     parser.add_argument('-u', '--user',
                         default=CURRENT_USER,
-                        help='Specify the user name when loggin into the host in ssh format.')
+                        help='Specify the user identity for SSH login to specified host.')
     parser.add_argument('-p', '--password',
                         default='',
-                        help='Specify the user password when logging into the host in ssh format.')
+                        help='Specify the user password for SSH login to specified host.')
     parser.add_argument('-c', '--command',
                         nargs='+',
                         default=[],
-                        help='Specify command you want run on specified host(s).')
+                        help='Specify the command to run on specified remote host(s).')
     parser.add_argument('-s', '--script',
                         nargs='+',
                         default=[],
-                        help='Specify script you want run on specified host(s), will copy script to host /tmp directory.')
+                        help='Specify the script to run on specified host(s), will copy script to host /tmp directory.')
     parser.add_argument('-P', '--parallel',
-                        action='store_true',
-                        default=False,
-                        help='Run command/script parallel on specified host(s), default is in serial.')
+                        type=int,
+                        default=0,
+                        help='Specify the parallelism of command execution with a number.')
     parser.add_argument('-t', '--timeout',
                         type=int,
-                        default=config.timeout,
-                        help='Specify ssh timeout, default is ' + str(config.timeout) + ' seconds.')
+                        help='Specify the timeout for SSH, which defaults to ' + str(config.serial_timeout) + ' seconds in serial and ' + str(config.parallel_timeout) + ' seconds in parallel.')
     parser.add_argument('-l', '--output_message_level',
                         type=int,
                         choices=[0, 1, 2, 3, 4],
                         default=3,
-                        help='''Specify output message level, default is "3".
+                        help='''Specify output message level, which defaults to "3" in serial and "0" in parallel.
 "0" : print host info;
-"1" : print output message;
-"2" : print host info and the first line of the output message;
-"3" : print host info and complete output message;
-"4" : print verbose information.''')
+"1" : print command output message;
+"2" : print host info and the first line of the command output message;
+"3" : print host info and complete command output message;
+"4" : print verbose information with ssh command.''')
     parser.add_argument('-o', '--output_file',
                         default='',
                         help='Export output message of command/script to specified file instead of on the screen.')
+    parser.add_argument('-g', '--gui',
+                        action='store_true',
+                        default=False,
+                        help='Open batchRun with GUI format.')
     parser.add_argument('-v', '--version',
                         action="store_true",
                         default=False,
@@ -104,16 +112,39 @@ def read_args():
 
     args = parser.parse_args()
 
+    # Enable GUI mode.
+    if args.gui:
+        os.system(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run_gui')
+        sys.exit(0)
+
     # Get batchRun version information.
     if args.version:
-        common.bprint('Version : 1.2')
-        common.bprint('Release : 2024.8.23')
+        common.bprint('Version : ' + str(VERSION))
+        common.bprint('Release : ' + str(VERSION_DATE))
         sys.exit(0)
 
     # Check hosts/groups settings.
     if (not args.hosts) and (not args.groups):
         common.bprint('Neither of argument "--hosts" or "--groups" is specified.', level='Error')
         sys.exit(1)
+
+    # Analyze host file.
+    if (len(args.hosts) == 1) and os.path.isfile(args.hosts[0]):
+        with open(args.hosts[0], 'r') as HF:
+            args.hosts = []
+
+            for line in HF.readlines():
+                if (not re.match(r'^\s*#.*$', line)) and (not re.match(r'^\s*$', line)):
+                    args.hosts.append(line.strip())
+
+    # Analyze group file.
+    if (len(args.groups) == 1) and os.path.isfile(args.groups[0]):
+        with open(args.groups[0], 'r') as GF:
+            args.groups = []
+
+            for line in GF.readlines():
+                if (not re.match(r'^\s*#.*$', line)) and (not re.match(r'^\s*$', line)):
+                    args.groups.append(line.strip())
 
     # Get specified host(s) info.
     host_list_class = common.ParseHostList()
@@ -141,6 +172,13 @@ def read_args():
         if not args.script:
             common.bprint('No valid script is specified.', level='Error')
             sys.exit(1)
+
+    # Reset default timeout setting.
+    if not args.timeout:
+        if args.parallel:
+            args.timeout = config.parallel_timeout
+        else:
+            args.timeout = config.serial_timeout
 
     # Set output_message_level for parallel mode.
     if args.parallel and (not args.output_file) and (args.output_message_level in [1, 2, 3, 4]):
@@ -257,19 +295,6 @@ def update_script_setting(script_list):
     return []
 
 
-def create_dir(dir_path, permission=0o777):
-    """
-    Create dir with specified permission.
-    """
-    if not os.path.exists(dir_path):
-        try:
-            os.makedirs(dir_path)
-            os.chmod(dir_path, permission)
-        except Exception as error:
-            common.bprint('Failed on creating directory "' + str(dir_path) + '", ' + str(error), level='Error')
-            sys.exit(1)
-
-
 class BatchRun():
     def __init__(self, specified_host_dic, user, password, command_list, script_list, parallel, timeout, output_message_level, output_file):
         self.specified_host_dic = specified_host_dic
@@ -282,27 +307,35 @@ class BatchRun():
         self.output_message_level = output_message_level
         self.output_file = output_file
 
+    def save_command(self):
+        """
+        Save command info into command history file under config.db_path/log.
+        """
+        if hasattr(config, 'db_path') and config.db_path:
+            # Create log dir.
+            log_dir = str(config.db_path) + '/log'
+            common.create_dir(log_dir, permission=0o1777)
+            log_user_dir = str(log_dir) + '/' + str(CURRENT_USER)
+            common.create_dir(log_user_dir, permission=0o700)
+
+            # Write command history file.
+            command_history_file = str(log_user_dir) + '/command.his'
+            log_file = str(log_user_dir) + '/' + str(START_TIME)
+
+            with open(command_history_file, 'a') as CHF:
+                start_date = START_TIME.split('_')[0]
+                start_time = START_TIME.split('_')[1]
+                cmd_string = ' '.join(sys.argv).strip()
+                command_dic = {'date': start_date, 'time': start_time, 'user': CURRENT_USER, 'login_user': LOGIN_USER, 'command': cmd_string, 'log': log_file}
+                CHF.write(str(json.dumps(command_dic, ensure_ascii=False)) + '\n')
+
     def save_log(self, message, end='\n'):
         """
         Save output message into log file under config.db_path/log.
         """
         if hasattr(config, 'db_path') and config.db_path:
-            # Create log dir.
-            log_dir = str(config.db_path) + '/log'
-            create_dir(log_dir)
-            log_user_dir = str(log_dir) + '/' + str(CURRENT_USER)
-            create_dir(log_user_dir, permission=0o700)
-
             # Write log file.
-            log_file = str(log_user_dir) + '/' + str(START_TIME)
-
-            if not os.path.exists(log_file):
-                with open(log_file, 'a') as LF:
-                    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    cmd_string = ' '.join(sys.argv)
-                    his_dic = {'time': current_time, 'user': CURRENT_USER, 'login_user': LOGIN_USER, 'command': cmd_string.strip()}
-                    LF.write(str(json.dumps(his_dic, ensure_ascii=False)) + '\n')
-                    LF.write('\n')
+            log_file = str(config.db_path) + '/log/' + str(CURRENT_USER) + '/' + str(START_TIME)
 
             with open(log_file, 'a') as LF:
                 LF.write(str(message) + str(end))
@@ -322,7 +355,7 @@ class BatchRun():
             output_dir = os.path.dirname(output_file)
 
             if output_dir and (not os.path.exists(output_dir)):
-                create_dir(output_dir)
+                common.create_dir(output_dir, permission=0o777)
 
             # Write output file.
             with open(output_file, 'a') as OF:
@@ -446,6 +479,11 @@ class BatchRun():
         """
         Main function, run commands parallel or serial.
         """
+        # Save command
+        self.save_command()
+
+        host_num = 0
+
         if self.parallel:
             # Parallel mode.
             thread_list = []
@@ -469,14 +507,26 @@ class BatchRun():
                     thread_list.append(thread)
 
             # Join sub-threads with main-thread.
+            alive_thread_list = []
+
             for thread in thread_list:
+                host_num += 1
                 thread.join()
+                alive_thread_list.append(thread)
+
+                while len(alive_thread_list) >= self.parallel:
+                    time.sleep(1)
+
+                    for alive_thread in alive_thread_list:
+                        if not alive_thread.is_alive():
+                            alive_thread_list.remove(alive_thread)
         else:
             # Serial mode.
             for host in self.specified_host_dic.keys():
                 if 'host_ip' in self.specified_host_dic[host]:
                     for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
                         ssh_port = self.specified_host_dic[host]['ssh_port'][i]
+                        host_num += 1
                         self.execute_ssh_command(host, host_ip, ssh_port)
                 else:
                     host_ip = None
@@ -485,7 +535,10 @@ class BatchRun():
                     if 'ssh_port' in self.specified_host_dic[host]:
                         ssh_port = self.specified_host_dic[host]['ssh_port']
 
+                    host_num += 1
                     self.execute_ssh_command(host, host_ip, ssh_port)
+
+        print('\nTotal ' + str(host_num) + ' hosts.')
 
 
 ################

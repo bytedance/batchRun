@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import json
+import datetime
 import argparse
 
 sys.path.insert(0, os.environ['BATCH_RUN_INSTALL_PATH'])
@@ -76,20 +77,14 @@ class SampleHostInfo():
 
     def collect_host_info(self):
         """
-        Collect host groups/os/hardware information from files under self.output_dir.
+        Collect host os/hardware information from files under self.output_dir.
         """
         host_info_dic = {}
 
-        # Get host group information.
-        host_list_file = str(self.output_dir) + '/host_list.json'
-
-        if os.path.exists(host_list_file):
-            with open(host_list_file, 'r') as HLF:
-                host_list_dic = json.loads(HLF.read())
-
         # Get host_info_dic based on *.info files.
-        server_type_compile = re.compile(r'^\s*Hypervisor vendor:.*$')
-        os_compile = re.compile(r'^\s*Description:\s*(.+?)\s*$')
+        server_type_compile = re.compile(r'^\s*Chassis:\s*(\S*)\s*$')
+        os1_compile = re.compile(r'^\s*Description:\s*(.+?)\s*$')
+        os2_compile = re.compile(r'^\s*Operating System:.*?([A-Z].+?\)).*$')
         cpu_architecture_compile = re.compile(r'^\s*Architecture:\s*(\S+)\s*$')
         cpu_thread_compile = re.compile(r'^\s*CPU\(s\):\s*(\d+)\s*$')
         thread_per_core_compile = re.compile(r'^\s*Thread\(s\) per core:\s*(\d+)\s*$')
@@ -102,87 +97,94 @@ class SampleHostInfo():
             for file in files:
                 if re.match(r'^(\S+)\.info$', file):
                     my_match = re.match(r'^(\S+)\.info$', file)
-                    host = my_match.group(1)
-                    host_info_dic.setdefault(host, {'groups': [],
-                                                    'host_ip': [],
-                                                    'host_name': [],
-                                                    'server_type': 'physical',
-                                                    'os': '',
-                                                    'cpu_architecture': '',
-                                                    'cpu_thread': 0,
-                                                    'thread_per_core': 0,
-                                                    'cpu_model': '',
-                                                    'cpu_frequency': '',
-                                                    'cpu_frequency_unit': 'GHz',
-                                                    'mem_size': '',
-                                                    'mem_size_unit': 'GB',
-                                                    'swap_size': '',
-                                                    'swap_size_unit': 'GB'})
-
-                    if host in host_list_dic:
-                        if 'groups' in host_list_dic[host]:
-                            for groups in host_list_dic[host]['groups']:
-                                if isinstance(groups, list):
-                                    for group in groups:
-                                        if group not in host_info_dic[host]['groups']:
-                                            host_info_dic[host]['groups'].append(group)
-                                else:
-                                    if groups not in host_info_dic[host]['groups']:
-                                        host_info_dic[host]['groups'].append(groups)
-
-                        if 'host_ip' in host_list_dic[host]:
-                            if len(host_list_dic[host]['host_ip']) == 1:
-                                host_info_dic[host]['host_ip'] = host_list_dic[host]['host_ip'][0]
-                            else:
-                                host_info_dic[host]['host_ip'] = host_list_dic[host]['host_ip']
-                        elif common.is_ip(host):
-                            host_info_dic[host]['host_ip'] = host
-
-                        if 'host_name' in host_list_dic[host]:
-                            if len(host_list_dic[host]['host_name']) == 1:
-                                host_info_dic[host]['host_name'] = host_list_dic[host]['host_name'][0]
-                            else:
-                                host_info_dic[host]['host_name'] = host_list_dic[host]['host_name']
-                        elif not common.is_ip(host):
-                            host_info_dic[host]['host_name'] = host
+                    host_ip = my_match.group(1)
+                    host_info_dic.setdefault(host_ip, {'server_type': '',
+                                                       'os': '',
+                                                       'cpu_architecture': '',
+                                                       'cpu_thread': 0,
+                                                       'thread_per_core': 0,
+                                                       'cpu_model': '',
+                                                       'cpu_frequency': 0.0,
+                                                       'cpu_frequency_unit': 'GHz',
+                                                       'mem_size': 0,
+                                                       'mem_size_unit': 'GB',
+                                                       'swap_size': 0,
+                                                       'swap_size_unit': 'GB'})
 
                     with open(os.path.join(root, file), 'r') as IF:
                         for line in IF.readlines():
                             if server_type_compile.match(line):
-                                host_info_dic[host]['server_type'] = 'virtual'
-                            elif os_compile.match(line):
-                                my_match = os_compile.match(line)
-                                host_info_dic[host]['os'] = my_match.group(1)
+                                my_match = server_type_compile.match(line)
+                                host_info_dic[host_ip]['server_type'] = my_match.group(1)
+                            elif os1_compile.match(line):
+                                my_match = os1_compile.match(line)
+                                host_info_dic[host_ip]['os'] = my_match.group(1)
+                            elif os2_compile.match(line):
+                                if not host_info_dic[host_ip]['os']:
+                                    my_match = os2_compile.match(line)
+                                    host_info_dic[host_ip]['os'] = my_match.group(1)
                             elif cpu_architecture_compile.match(line):
                                 my_match = cpu_architecture_compile.match(line)
-                                host_info_dic[host]['cpu_architecture'] = my_match.group(1)
+                                host_info_dic[host_ip]['cpu_architecture'] = my_match.group(1)
                             elif cpu_thread_compile.match(line):
                                 my_match = cpu_thread_compile.match(line)
-                                host_info_dic[host]['cpu_thread'] = int(my_match.group(1))
+                                host_info_dic[host_ip]['cpu_thread'] = int(my_match.group(1))
                             elif thread_per_core_compile.match(line):
                                 my_match = thread_per_core_compile.match(line)
-                                host_info_dic[host]['thread_per_core'] = int(my_match.group(1))
+                                host_info_dic[host_ip]['thread_per_core'] = int(my_match.group(1))
                             elif cpu_model_compile.match(line):
                                 my_match = cpu_model_compile.match(line)
-                                host_info_dic[host]['cpu_model'] = my_match.group(1)
+                                host_info_dic[host_ip]['cpu_model'] = my_match.group(1)
                             elif cpu_frequency_compile.match(line):
                                 my_match = cpu_frequency_compile.match(line)
-                                host_info_dic[host]['cpu_frequency'] = round(float(my_match.group(1))/1000, 2)
+                                host_info_dic[host_ip]['cpu_frequency'] = round(float(my_match.group(1))/1000, 1)
                             elif mem_size_compile.match(line):
                                 my_match = mem_size_compile.match(line)
-                                host_info_dic[host]['mem_size'] = int(my_match.group(1))
+                                host_info_dic[host_ip]['mem_size'] = int(my_match.group(1))
                             elif swap_size_compile.match(line):
                                 my_match = swap_size_compile.match(line)
-                                host_info_dic[host]['swap_size'] = int(my_match.group(1))
+                                host_info_dic[host_ip]['swap_size'] = int(my_match.group(1))
+
+        return host_info_dic
+
+    def update_host_info(self, host_info_dic, old_host_info_file):
+        """
+        Get old host_info_dic from old_host_info_file.
+        If host_info missing on host_info_dic, get it from old host_info_dic.
+        """
+        old_host_info_dic = {}
+
+        if os.path.exists(old_host_info_file):
+            with open(old_host_info_file, 'r') as OHIF:
+                old_host_info_dic = json.loads(OHIF.read())
+
+        if old_host_info_dic:
+            for host in host_info_dic.keys():
+                if (not host_info_dic[host]['os']) and (host in old_host_info_dic) and old_host_info_dic[host]['os']:
+                    common.bprint('Host information is empty for "' + str(host) + '", reset it with old host_info.json file.', indent=4, level='Warning')
+                    host_info_dic[host] = old_host_info_dic[host]
 
         return host_info_dic
 
     def sample_host_info(self):
         """
-        Sample host os information with command "lsb_release -a".
+        Sample host os information with command "lsb_release -a; hostnamectl".
         Sample host hardware information with command "lshw".
         Collect host information into "self.output_dir/host_info.json".
         """
+        # Save old host_info.json.
+        current_host_info_file = str(self.output_dir) + '/host_info.json'
+        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        old_host_info_file = str(self.output_dir) + '/host_info.json.' + str(current_time)
+
+        if os.path.exists(current_host_info_file):
+            command = 'mv ' + str(current_host_info_file) + ' ' + str(old_host_info_file)
+            common.bprint('>>> Move ' + str(current_host_info_file) + ' to ' + str(old_host_info_file) + ' ...')
+            common.bprint(command, indent=4)
+            os.chdir(self.output_dir)
+            os.system(command)
+            os.chdir(CWD)
+
         # Clean up self.output_dir.
         command = 'rm -rf *.info host_list.json host_info.json'
         common.bprint('>>> Clean up ' + str(self.output_dir) + ' ...')
@@ -198,7 +200,7 @@ class SampleHostInfo():
         os.system(command)
 
         # Sample host os/cpu/mem information.
-        command = str(self.batch_run_command) + ' -c "lsb_release -a; lscpu; free -g" -P -l 1 -o ' + str(self.output_dir) + '/HOST.info'
+        command = str(self.batch_run_command) + ' -c "lsb_release -a; hostnamectl; lscpu; free -g" -P 30 -l 1 -o ' + str(self.output_dir) + '/HOST.info'
         common.bprint('>>> Sampling host os/cpu/mem information ...')
         common.bprint(command, indent=4)
         os.system(command)
@@ -206,6 +208,7 @@ class SampleHostInfo():
         # Collect host information.
         common.bprint('>>> Collecting host information ...')
         host_info_dic = self.collect_host_info()
+        host_info_dic = self.update_host_info(host_info_dic, old_host_info_file)
         host_info_file = str(self.output_dir) + '/host_info.json'
 
         with open(host_info_file, 'w') as HIF:

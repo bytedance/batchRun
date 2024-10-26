@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 CWD = os.getcwd()
@@ -13,7 +14,7 @@ def check_python_version():
     print('>>> Check python version.')
 
     current_python = sys.version_info[:2]
-    required_python = (3, 8)
+    required_python = (3, 12)
 
     if current_python < required_python:
         sys.stderr.write("""
@@ -29,21 +30,20 @@ Current python is Python {}.{}.
         print('    Current  python version : ' + str(current_python))
 
 
-def gen_env_file():
-    env_file = str(CWD) + '/.env.py'
+def get_ld_library_path_setting():
+    """
+    Get variable LD_LIBRARY_PATH setting for batchRun.
+    """
+    python_lib_path = re.sub('/bin', '/lib', PYTHON_PATH)
+    ld_library_path_setting = 'export LD_LIBRARY_PATH=$BATCH_RUN_INSTALL_PATH/lib:' + str(python_lib_path) + ':'
 
-    try:
-        with open(env_file, 'w') as EF:
-            EF.write("""
-# Set python3 path.
-PYTHON_PATH = """ + str(PYTHON_PATH) + """
+    if 'LD_LIBRARY_PATH' in os.environ:
+        if python_lib_path in str(os.environ['LD_LIBRARY_PATH']):
+            ld_library_path_setting = str(ld_library_path_setting) + re.sub(str(python_lib_path) + ':', '', os.environ['LD_LIBRARY_PATH'])
+        else:
+            ld_library_path_setting = str(ld_library_path_setting) + str(os.environ['LD_LIBRARY_PATH'])
 
-# Set install path.
-BATCH_RUN_INSTALL_PATH = """ + str(CWD))
-    except Exception as error:
-        print('*Error*: Failed on writting env file "' + str(env_file) + '".')
-        print('         ' + str(error))
-        sys.exit(1)
+    return ld_library_path_setting
 
 
 def gen_batch_run():
@@ -51,6 +51,7 @@ def gen_batch_run():
     Generate script <BATCH_RUN_INSTALL_PATH>/bin/batch_run.
     """
     batch_run = str(CWD) + '/bin/batch_run'
+    ld_library_path_setting = get_ld_library_path_setting()
 
     print('')
     print('>>> Generate script "' + str(batch_run) + '".')
@@ -64,6 +65,9 @@ export PATH=""" + str(PYTHON_PATH) + """:$PATH
 
 # Set install path.
 export BATCH_RUN_INSTALL_PATH=""" + str(CWD) + """
+
+# Set LD_LIBRARY_PATH.
+""" + str(ld_library_path_setting) + """
 
 # Preprocess "command" argument.
 pre_arg=""
@@ -94,9 +98,10 @@ python3 $BATCH_RUN_INSTALL_PATH/bin/batch_run.py ${args[*]}
 
 def gen_shell_tools():
     """
-    Generate shell scripts under <BATCH_RUN_INSTALL_PATH>/tools.
+    Generate shell scripts under <BATCH_RUN_INSTALL_PATH>.
     """
-    tool_list = ['tools/encrypt_python', 'tools/patch', 'tools/sample_host_info', 'tools/save_password', 'tools/switch_etc_hosts']
+    tool_list = ['bin/batch_run_gui', 'tools/encrypt_python', 'tools/patch', 'tools/sample_host_info', 'tools/save_password', 'tools/switch_etc_hosts']
+    ld_library_path_setting = get_ld_library_path_setting()
 
     for tool_name in tool_list:
         tool = str(CWD) + '/' + str(tool_name)
@@ -113,6 +118,9 @@ export PATH=""" + str(PYTHON_PATH) + """:$PATH
 
 # Set install path.
 export BATCH_RUN_INSTALL_PATH=""" + str(CWD) + """
+
+# Set LD_LIBRARY_PATH.
+""" + str(ld_library_path_setting) + """
 
 # Execute """ + str(tool_name) + """.py.
 python3 $BATCH_RUN_INSTALL_PATH/""" + str(tool_name) + '.py $@')
@@ -152,7 +160,8 @@ default_ssh_command = "ssh -o StrictHostKeyChecking=no -t -q"
 fuzzy_match = True
 
 # Define timeout for ssh command, unit is "second".
-timeout = 10
+serial_timeout = 10
+parallel_timeout = 100
 """)
 
             os.chmod(config_file, 0o777)
@@ -166,7 +175,6 @@ timeout = 10
 ################
 def main():
     check_python_version()
-    gen_env_file()
     gen_batch_run()
     gen_shell_tools()
     gen_config_file()
