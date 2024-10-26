@@ -1,4 +1,56 @@
-# batchRun V1.2
+**Version:** V2.0 (2024.10.26)
+
+
+## What's batchRun?
+batchRun is a batch opration, asset management, and information collection tool applied to HPC systems.
+You can run batchRun with command line or GUI mode.
+
+
+## Python dependency
+Need python3.12.7
+Install python library dependency with command
+
+    pip install -r requirements.txt
+
+
+## Install
+Copy install package into install directory.
+Execute below command under install directory.
+
+    python3 install.py
+
+
+## Quick start
+Execute command `batch_run --help` to get usage information.
+Execute command `batch_run --gui` to enable GUI mode.
+* Below is a demo on how to get group-host configuration.
+
+   ![list_hosts_demo](data/demo/list_hosts_demo.gif)
+
+* Below is a demo on how to run command with command line.
+
+   ![command_line_run_demo](data/demo/command_line_run_demo.gif)
+
+* Below is a demo on how to run command with GUI.
+
+   ![gui_run_demo](data/demo/gui_run_demo.gif)
+
+
+## Configuration
+Come into <BATCH_RUN_INSTALL_PATH>/config directory,
+
+  - Update "config.py" for batchRun basic configuration.
+  - Update "host.list" for group-host relationship.
+  - Update "password.encrypted" for encrypted user/password information if necessary.
+
+
+## Sample
+Collect host information with tool "sample_host_info".
+
+
+## Doc
+More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_manual.pdf)
+
 
 ## Update history
 ***
@@ -8,37 +60,4 @@
 | V1.1    | (2023.07) | Support host_ip & host_name multi-mapping. |
 |         |           | Remove LSF supporting.                     |
 | V1.2    | (2024.08) | Add host info sampling function.           |
-
-
-## Introduction
-***
-
-### 0. What is batchRun?
-batchRun is an open source IT automation engine, which is used 
-for task push and information retrieval across multiple linux 
-servers, just like pssh or ansible.
-
-### 1. Python dependency
-Need python3.8.8, Anaconda3-2021.05-Linux-x86_64.sh is better.
-Install python library dependency with command
-
-    pip install -r requirements.txt
-
-### 2. Install
-Copy install package into install directory.
-Execute below command under install directory.
-
-    python3 install.py
-
-### 3. Config
-  - Basic configuration  
-    config/config.py : basic configuration.
-  - Host informaiton  
-    config/host.list : save the host and host_group
-    information.
-  - Encrypted user&password information  
-    config/password.encrypted : save encrypted user/password  
-    information, generate it with tool tools/save_password.
-
-
-More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_manual.pdf)
+| V2.0    | (2024.10) | Add GUI.                                   |
