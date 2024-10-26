@@ -1259,6 +1259,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 elif (run_command == 'hostname') and (self.run_tab_host_dic[host_ip]['output_message'] != self.run_tab_table.item(row, 1).text().strip()):
                     self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
                     self.update_run_tab_frame1('*Warning*: Host "' + str(self.run_tab_table.item(row, 0).text().strip()) + '", hostname is "' + str(self.run_tab_table.item(row, 1).text().strip()) + '" in host.list, but "' + str(self.run_tab_host_dic[host_ip]['output_message']) + '" with hostname command.', color='yellow')
+                else:
+                    self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
 
     def gen_run_tab_frame1(self):
         # self.run_tab_frame1
@@ -1269,7 +1271,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         run_tab_frame1_grid.addWidget(self.run_tab_log_text, 0, 0)
         self.run_tab_frame1.setLayout(run_tab_frame1_grid)
 
-    def update_run_tab_frame1(self, message, color=''):
+    def update_run_tab_frame1(self, message, color='white'):
         """
         self.update self.run_tab_log_text with specified message.
         """

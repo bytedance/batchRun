@@ -39,6 +39,10 @@ def read_args():
     parser.add_argument('-p', '--password',
                         default='',
                         help='Specify the user password when connectting host with.')
+    parser.add_argument('-P', '--parallel',
+                        type=int,
+                        default=100,
+                        help='Specify the parallelism of command execution with a number.')
     parser.add_argument('-o', '--output_dir',
                         default=CWD,
                         help='Where to save temporary file and host_info.json, default is current directory.')
@@ -51,29 +55,32 @@ def read_args():
         sys.exit(1)
 
     # Check output_dir.
-    if not os.path.exists(args.output_dir):
+    if os.path.exists(args.output_dir):
+        args.output_dir = os.path.realpath(args.output_dir)
+    else:
         common.bprint('"' + str(args.output_dir) + '": No such directory.', level='Error')
         sys.exit(1)
 
-    return args.hosts, args.groups, args.user, args.password, args.output_dir
+    return args.hosts, args.groups, args.user, args.password, args.parallel, args.output_dir
 
 
 class SampleHostInfo():
-    def __init__(self, host_list, group_list, user, password, output_dir):
+    def __init__(self, host_list, group_list, user, password, parallel, output_dir):
+        self.parallel = parallel
         self.output_dir = output_dir
         self.batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run'
 
         if host_list:
-            self.batch_run_command = str(self.batch_run_command) + ' -H ' + str(' '.join(host_list))
+            self.batch_run_command = str(self.batch_run_command) + ' --hosts ' + str(' '.join(host_list))
 
         if group_list:
-            self.batch_run_command = str(self.batch_run_command) + ' -G ' + str(' '.join(group_list))
+            self.batch_run_command = str(self.batch_run_command) + ' --groups ' + str(' '.join(group_list))
 
         if user:
-            self.batch_run_command = str(self.batch_run_command) + ' -u ' + str(' '.join(user))
+            self.batch_run_command = str(self.batch_run_command) + ' --user ' + str(' '.join(user))
 
         if password:
-            self.batch_run_command = str(self.batch_run_command) + ' -p ' + str(' '.join(password))
+            self.batch_run_command = str(self.batch_run_command) + ' --password ' + str(' '.join(password))
 
     def collect_host_info(self):
         """
@@ -194,13 +201,13 @@ class SampleHostInfo():
         os.chdir(CWD)
 
         # Sample host list information.
-        command = str(self.batch_run_command) + ' -L -o ' + str(self.output_dir) + '/host_list.json'
+        command = str(self.batch_run_command) + ' --list --output_file ' + str(self.output_dir) + '/host_list.json'
         common.bprint('>>> Sampling host list information ...')
         common.bprint(command, indent=4)
         os.system(command)
 
         # Sample host os/cpu/mem information.
-        command = str(self.batch_run_command) + ' -c "lsb_release -a; hostnamectl; lscpu; free -g" -P 30 -l 1 -o ' + str(self.output_dir) + '/HOST.info'
+        command = str(self.batch_run_command) + ' --command "lsb_release -a; hostnamectl; lscpu; free -g" --parallel ' + str(self.parallel) + ' --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.info'
         common.bprint('>>> Sampling host os/cpu/mem information ...')
         common.bprint(command, indent=4)
         os.system(command)
@@ -221,8 +228,8 @@ class SampleHostInfo():
 # Main Process #
 ################
 def main():
-    (hosts, groups, user, password, output_dir) = read_args()
-    my_sample_host_info = SampleHostInfo(hosts, groups, user, password, output_dir)
+    (hosts, groups, user, password, parallel, output_dir) = read_args()
+    my_sample_host_info = SampleHostInfo(hosts, groups, user, password, parallel, output_dir)
     my_sample_host_info.sample_host_info()
 
 
