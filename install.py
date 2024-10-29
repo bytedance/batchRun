@@ -161,7 +161,7 @@ fuzzy_match = True
 
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
-parallel_timeout = 100
+parallel_timeout = 20
 """)
 
             os.chmod(config_file, 0o777)
