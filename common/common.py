@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import copy
+import pandas
 import datetime
 import subprocess
 
@@ -1014,3 +1015,16 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
                         expected_group_list.append(host_groups)
 
     return specified_host_dic, excluded_host_list, expected_group_list, excluded_group_list
+
+
+def write_csv(csv_file, content_dic):
+    """
+    Write csv with content_dic.
+    content_dic = {
+        'title_1': [column1_1, columne1_2, ...],
+        'title_2': [column2_1, columne2_2, ...],
+        ...
+    }
+    """
+    df = pandas.DataFrame(content_dic)
+    df.to_csv(csv_file, index=False)
