@@ -3,16 +3,16 @@
 # File Name   : batch_run.py
 # Author      : liyanqing.1987
 # Created On  : 2021-08-09 19:18:43
-# Description : batchRun is an open source IT automation engine, which is used for
-#               task push and information retrieval across multiple linux servers,
-#               just like pssh or ansible.
+# Description : batchRun is a batch opration, asset management, and information
+#               collection tool applied to HPC systems.
 ################################
 import os
 import re
 import sys
 import json
-import copy
 import time
+import copy
+import shutil
 import getpass
 import datetime
 import argparse
@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.10.26'
+VERSION_DATE = '2024.10.28'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -77,14 +77,13 @@ def read_args():
                         nargs='+',
                         default=[],
                         help='Specify the command to run on specified remote host(s).')
-    parser.add_argument('-s', '--script',
-                        nargs='+',
-                        default=[],
-                        help='Specify the script to run on specified host(s), will copy script to host /tmp directory.')
     parser.add_argument('-P', '--parallel',
                         type=int,
-                        default=0,
-                        help='Specify the parallelism of command execution with a number.')
+                        default=1,
+                        help='''Specify the parallelism of command execution with a number, default is "1" (serial mode).
+"0" : Parallel mode, run all tasks in parallel;
+"1" : Serial mode;
+"n" : Parallel mode, run n tasks in parallel.''')
     parser.add_argument('-t', '--timeout',
                         type=int,
                         help='Specify the timeout for SSH, which defaults to ' + str(config.serial_timeout) + ' seconds in serial and ' + str(config.parallel_timeout) + ' seconds in parallel.')
@@ -100,7 +99,7 @@ def read_args():
 "4" : print verbose information with ssh command.''')
     parser.add_argument('-o', '--output_file',
                         default='',
-                        help='Export output message of command/script to specified file instead of on the screen.')
+                        help='Export output message of command to specified file instead of on the screen.')
     parser.add_argument('-g', '--gui',
                         action='store_true',
                         default=False,
@@ -159,33 +158,24 @@ def read_args():
         list_hosts(host_list_class, specified_host_dic, expected_group_list, excluded_group_list, args.output_file)
         sys.exit(0)
 
-    # Check command & script.
-    if args.command and args.script:
-        common.bprint('Cannot specify arguments "--command" and "--script" the same time.', level='Error')
+    # Check command setting.
+    if not args.command:
+        common.bprint('No command is specified.', level='Error')
         sys.exit(1)
-    elif (not args.command) and (not args.script):
-        common.bprint('Neither of argument "--command" or "--script" is specified.', level='Error')
-        sys.exit(1)
-    elif args.script:
-        args.script = update_script_setting(args.script)
-
-        if not args.script:
-            common.bprint('No valid script is specified.', level='Error')
-            sys.exit(1)
 
     # Reset default timeout setting.
     if not args.timeout:
-        if args.parallel:
-            args.timeout = config.parallel_timeout
-        else:
+        if args.parallel == 1:
             args.timeout = config.serial_timeout
+        else:
+            args.timeout = config.parallel_timeout
 
     # Set output_message_level for parallel mode.
-    if args.parallel and (not args.output_file) and (args.output_message_level in [1, 2, 3, 4]):
+    if (args.parallel != 1) and (not args.output_file) and (args.output_message_level in [3, 4]):
         common.bprint('Switch output_message_level to "0" on parallel mode.', level='Warning')
         args.output_message_level = 0
 
-    return specified_host_dic, args.user, args.password, args.command, args.script, args.parallel, args.timeout, args.output_message_level, args.output_file
+    return specified_host_dic, args.user, args.password, args.command, args.parallel, args.timeout, args.output_message_level, args.output_file
 
 
 def get_specified_hosts(host_list_class, specified_host_list, specified_group_list):
@@ -277,35 +267,19 @@ def list_hosts(host_list_class, specified_host_dic, expected_group_list, exclude
                 print('        ' + str(host))
 
 
-def update_script_setting(script_list):
-    """
-    Get real script path, and splice the complate command line.
-    """
-    if os.path.exists(script_list[0]):
-        script_list[0] = os.path.realpath(script_list[0])
-        return script_list
-    else:
-        default_script_dir = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/scripts'
-
-        for (root, dirs, files) in os.walk(default_script_dir):
-            if script_list[0] in files:
-                script_list[0] = str(root) + '/' + str(script_list[0])
-                return script_list
-
-    return []
-
-
 class BatchRun():
-    def __init__(self, specified_host_dic, user, password, command_list, script_list, parallel, timeout, output_message_level, output_file):
+    def __init__(self, specified_host_dic, user, password, command_list, parallel, timeout, output_message_level, output_file):
         self.specified_host_dic = specified_host_dic
         self.user = user
         self.password = password
         self.command_list = command_list
-        self.script_list = script_list
         self.parallel = parallel
         self.timeout = timeout
         self.output_message_level = output_message_level
         self.output_file = output_file
+
+        self.command_missing_string_list = ['command not found', 'Command not found.', 'No such file or directory']
+        self.timeout_string_list = ['Timeout exceeded', 'pexpect.exceptions.TIMEOUT']
 
     def save_command(self):
         """
@@ -363,7 +337,7 @@ class BatchRun():
         else:
             print(message, end=end)
 
-    def get_ssh_command(self, host, host_ip, ssh_port):
+    def get_ssh_command(self, host, host_ip, ssh_port, command_list):
         """
         Get full ssh command based on host & ssh_port.
         """
@@ -388,6 +362,11 @@ class BatchRun():
             else:
                 ssh_command = str(ssh_command) + ' ' + str(host)
 
+        # Add specified command.
+        ssh_command = str(ssh_command) + ' ' + str(' '.join(command_list))
+        ssh_command = re.sub("'", "\\'", ssh_command)
+        ssh_command = re.sub('"', '\\"', ssh_command)
+
         return ssh_command
 
     def execute_ssh_command(self, host, host_ip, ssh_port):
@@ -410,35 +389,8 @@ class BatchRun():
                 self.save_out('>>> ' + str(host), host=host)
                 self.save_log('>>> ' + str(host))
 
-        # Copy script to host local with script-mode.
-        if self.script_list:
-            script_name = os.path.basename(self.script_list[0])
-
-            if ssh_port:
-                scp_command = 'scp -P ' + str(ssh_port) + ' ' + str(self.script_list[0]) + ' ' + str(host) + ':/tmp/' + str(script_name)
-            else:
-                scp_command = 'scp ' + str(self.script_list[0]) + ' ' + str(host) + ':/tmp/' + str(script_name)
-
-            if self.output_message_level == 4:
-                self.save_out('    ' + str(scp_command), host=host)
-                self.save_log('    ' + str(scp_command))
-
-            # scp_run usage:
-            # common_secure.scp_run(ssh_command, user, host, password, timeout=10)
-            stdout_lines = common_secure.scp_run(scp_command, self.user, host, self.password, self.timeout)
-
-        # Get original ssh command.
-        ssh_command = self.get_ssh_command(host, host_ip, ssh_port)
-
-        if self.command_list:
-            ssh_command = str(ssh_command) + ' ' + str(' '.join(self.command_list))
-        elif self.script_list:
-            script_list = copy.deepcopy(self.script_list)
-            script_list[0] = '/tmp/' + str(os.path.basename(self.script_list[0]))
-            ssh_command = str(ssh_command) + ' ' + str(' '.join(script_list))
-
-        ssh_command = re.sub("'", "\\'", ssh_command)
-        ssh_command = re.sub('"', '\\"', ssh_command)
+        # Get ssh command.
+        ssh_command = self.get_ssh_command(host, host_ip, ssh_port, self.command_list)
 
         if self.output_message_level == 4:
             self.save_out('    ' + str(ssh_command), host=host)
@@ -453,6 +405,20 @@ class BatchRun():
         if self.output_message_level == 4:
             self.save_out('    ==== output ====', host=host)
             self.save_log('    ==== output ====')
+
+        # Auto-rerun for "command missing" and "timeout" conditions.
+        if self.check_command_missing(stdout_lines) and shutil.which(self.command_list[0]):
+            if self.output_message_level == 4:
+                self.save_out('    Command missing, scp and rerun.', host=host)
+                self.save_log('    Command missing, scp and rerun.')
+
+            stdout_lines = self.scp_and_rerun(host, host_ip, ssh_port, stdout_lines)
+        elif self.check_timeout(stdout_lines):
+            if self.output_message_level == 4:
+                self.save_out('    Ssh timeout, rerun.', host=host)
+                self.save_log('    Ssh timeout, rerun.')
+
+            stdout_lines = common_secure.ssh_run(ssh_command, self.user, host, self.password, self.timeout)
 
         if not stdout_lines:
             if self.output_message_level == 2:
@@ -475,78 +441,172 @@ class BatchRun():
             self.save_out('    ================', host=host)
             self.save_log('    ================')
 
+    def check_command_missing(self, stdout_lines):
+        """
+        Search for command missing string on stdout_lines.
+        """
+        if stdout_lines and (len(stdout_lines) == 1):
+            for command_missing_string in self.command_missing_string_list:
+                if re.match(r'^.*' + str(command_missing_string) + r'\s*$', stdout_lines[0]) and (not re.search(r'cannot access', stdout_lines[0])):
+                    return True
+
+        return False
+
+    def check_timeout(self, stdout_lines):
+        """
+        Search for auto rerun string on stdout_lines.
+        """
+        if stdout_lines:
+            for line in stdout_lines:
+                for auto_rerun_string in self.timeout_string_list:
+                    if re.search(auto_rerun_string, line):
+                        return True
+
+        return False
+
+    def scp_and_rerun(self, host, host_ip, ssh_port, orig_stdout_lines):
+        """
+        If command missing on remote host, scp command/script to remove host local and rerun.
+        """
+        stdout_lines = orig_stdout_lines
+
+        # Scp command/script to remove host /tmp directory.
+        script_path = shutil.which(self.command_list[0])
+        script_name = os.path.basename(script_path)
+        local_script_path = '/tmp/' + str(script_name)
+
+        if ssh_port:
+            scp_command = 'scp -p -P ' + str(ssh_port) + ' ' + str(script_path) + ' ' + str(host) + ':' + str(local_script_path)
+        else:
+            scp_command = 'scp -p ' + str(script_path) + ' ' + str(host) + ':' + str(local_script_path)
+
+        common_secure.scp_run(scp_command, self.user, host, self.password, self.timeout)
+
+        # Re-run command.
+        command_list = copy.deepcopy(self.command_list)
+        command_list[0] = local_script_path
+        ssh_command = self.get_ssh_command(host, host_ip, ssh_port, command_list)
+        stdout_lines = common_secure.ssh_run(ssh_command, self.user, host, self.password, self.timeout)
+
+        return stdout_lines
+
     def run(self):
         """
-        Main function, run commands parallel or serial.
+        Main function, run commands in parallel or serial mode.
         """
         # Save command
         self.save_command()
+        start_second = time.time()
 
+        if self.parallel == 1:
+            host_num = self.serial_run()
+        else:
+            host_num = self.parallel_run()
+
+        end_second = time.time()
+        runtime = self.get_runtime(start_second, end_second)
+
+        print('\nTotal ' + str(host_num) + ' hosts.  (Runtime: ' + str(runtime) + ')')
+
+    def serial_run(self):
+        """
+        Run commands in serial mode.
+        """
         host_num = 0
 
-        if self.parallel:
-            # Parallel mode.
-            thread_list = []
+        for host in self.specified_host_dic.keys():
+            if 'host_ip' in self.specified_host_dic[host]:
+                for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
+                    ssh_port = self.specified_host_dic[host]['ssh_port'][i]
+                    host_num += 1
+                    self.execute_ssh_command(host, host_ip, ssh_port)
+            else:
+                host_ip = None
+                ssh_port = None
 
-            for host in self.specified_host_dic.keys():
-                if 'host_ip' in self.specified_host_dic[host]:
-                    for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
-                        ssh_port = self.specified_host_dic[host]['ssh_port'][i]
-                        thread = threading.Thread(target=self.execute_ssh_command, args=(host, host_ip, ssh_port))
-                        thread.start()
-                        thread_list.append(thread)
-                else:
-                    host_ip = None
-                    ssh_port = None
+                if 'ssh_port' in self.specified_host_dic[host]:
+                    ssh_port = self.specified_host_dic[host]['ssh_port']
 
-                    if 'ssh_port' in self.specified_host_dic[host]:
-                        ssh_port = self.specified_host_dic[host]['ssh_port']
+                host_num += 1
+                self.execute_ssh_command(host, host_ip, ssh_port)
 
+        return host_num
+
+    def parallel_run(self):
+        """
+        Run commands in parallel mode.
+        """
+        host_num = 0
+        thread_list = []
+
+        # Collect all commands into thread_list.
+        for host in self.specified_host_dic.keys():
+            if 'host_ip' in self.specified_host_dic[host]:
+                for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
+                    ssh_port = self.specified_host_dic[host]['ssh_port'][i]
                     thread = threading.Thread(target=self.execute_ssh_command, args=(host, host_ip, ssh_port))
                     thread.start()
                     thread_list.append(thread)
+            else:
+                host_ip = None
+                ssh_port = None
 
-            # Join sub-threads with main-thread.
-            alive_thread_list = []
+                if 'ssh_port' in self.specified_host_dic[host]:
+                    ssh_port = self.specified_host_dic[host]['ssh_port']
 
-            for thread in thread_list:
-                host_num += 1
-                thread.join()
-                alive_thread_list.append(thread)
+                thread = threading.Thread(target=self.execute_ssh_command, args=(host, host_ip, ssh_port))
+                thread.start()
+                thread_list.append(thread)
 
-                while len(alive_thread_list) >= self.parallel:
-                    time.sleep(1)
+        # Run commands in thread_list according to specified parallelism.
+        alive_thread_list = []
 
-                    for alive_thread in alive_thread_list:
-                        if not alive_thread.is_alive():
-                            alive_thread_list.remove(alive_thread)
-        else:
-            # Serial mode.
-            for host in self.specified_host_dic.keys():
-                if 'host_ip' in self.specified_host_dic[host]:
-                    for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
-                        ssh_port = self.specified_host_dic[host]['ssh_port'][i]
-                        host_num += 1
-                        self.execute_ssh_command(host, host_ip, ssh_port)
+        for thread in thread_list:
+            host_num += 1
+            thread.join()
+            alive_thread_list.append(thread)
+
+            while self.parallel and (len(alive_thread_list) >= self.parallel):
+                time.sleep(1)
+
+                for alive_thread in alive_thread_list:
+                    if not alive_thread.is_alive():
+                        alive_thread_list.remove(alive_thread)
+
+        return host_num
+
+    def get_runtime(self, start_second, end_second):
+        """
+        runtime = end_second - start_second
+        """
+        run_second = int(end_second) - int(start_second)
+        runtime = str(run_second) + ' seconds'
+
+        if run_second >= 60:
+            result = divmod(run_second, 60)
+            run_minute = result[0]
+            run_second_remainder = result[1]
+
+            if run_minute == 1:
+                runtime = str(run_minute) + ' minute'
+            else:
+                runtime = str(run_minute) + ' minutes'
+
+            if run_second_remainder:
+                if run_second_remainder == 1:
+                    runtime = str(runtime) + ' ' + str(run_second_remainder) + ' second'
                 else:
-                    host_ip = None
-                    ssh_port = None
+                    runtime = str(runtime) + ' ' + str(run_second_remainder) + ' seconds'
 
-                    if 'ssh_port' in self.specified_host_dic[host]:
-                        ssh_port = self.specified_host_dic[host]['ssh_port']
-
-                    host_num += 1
-                    self.execute_ssh_command(host, host_ip, ssh_port)
-
-        print('\nTotal ' + str(host_num) + ' hosts.')
+        return runtime
 
 
 ################
 # Main Process #
 ################
 def main():
-    (specified_host_dic, user, password, command_list, script_list, parallel, timeout, output_message_level, output_file) = read_args()
-    my_batch_run = BatchRun(specified_host_dic, user, password, command_list, script_list, parallel, timeout, output_message_level, output_file)
+    (specified_host_dic, user, password, command_list, parallel, timeout, output_message_level, output_file) = read_args()
+    my_batch_run = BatchRun(specified_host_dic, user, password, command_list, parallel, timeout, output_message_level, output_file)
     my_batch_run.run()
 
 

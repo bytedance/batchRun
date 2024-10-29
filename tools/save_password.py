@@ -44,7 +44,7 @@ def read_args():
     if not os.path.exists(password_dir_path):
         try:
             os.makedirs(password_dir_path)
-            os.chmod(password_dir_path, 0o777)
+            os.chmod(password_dir_path, 0o1777)
         except Exception as error:
             print('*Error*: Failed on creating password directory "' + str(password_dir_path) + '", ' + str(error))
             sys.exit(1)

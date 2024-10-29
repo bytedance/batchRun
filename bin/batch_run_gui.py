@@ -14,7 +14,7 @@ import getpass
 import datetime
 import qdarkstyle
 
-from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QAction, qApp, QTabWidget, QFrame, QGridLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox, QLineEdit, QHeaderView, QFileDialog, QTextEdit, QTreeWidget, QTreeWidgetItem, QDateEdit
+from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QAction, qApp, QTabWidget, QFrame, QGridLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox, QLineEdit, QHeaderView, QFileDialog, QTextEdit, QTreeWidget, QTreeWidgetItem, QDateEdit, QSplitter
 from PyQt5.QtGui import QIcon, QBrush, QColor
 from PyQt5.QtCore import Qt, QThread, QProcess, QDate
 
@@ -29,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.0'
-VERSION_DATE = '2024.10.26'
+VERSION_DATE = '2024.10.28'
 
 
 # Solve some unexpected warning message.
@@ -1038,20 +1038,33 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.run_tab_table.itemClicked.connect(self.run_tab_table_item_clicked)
 
         # self.run_tab - Grid
+        run_tab_left_container = QWidget()
+        run_tab_left_grid = QGridLayout()
+        run_tab_left_grid.addWidget(self.run_tab_frame0, 0, 0)
+        run_tab_left_grid.addWidget(self.run_tab_table, 1, 0)
+        run_tab_left_grid.addWidget(self.run_tab_frame1, 2, 0)
+        run_tab_left_grid.setRowStretch(0, 1)
+        run_tab_left_grid.setRowStretch(1, 10)
+        run_tab_left_grid.setRowStretch(2, 2)
+        run_tab_left_container.setLayout(run_tab_left_grid)
+
+        run_tab_right_container = QWidget()
+        run_tab_right_grid = QGridLayout()
+        run_tab_right_grid.addWidget(self.run_tab_frame2, 0, 0)
+        run_tab_right_container.setLayout(run_tab_right_grid)
+
+        run_tab_splitter = QSplitter(Qt.Horizontal)
+        run_tab_splitter.setHandleWidth(1)
+        run_tab_splitter.addWidget(run_tab_left_container)
+        run_tab_splitter.addWidget(run_tab_right_container)
+
+        total_width = self.width()
+        left_width = int(total_width * 2 / 3)
+        right_width = total_width - left_width
+        run_tab_splitter.setSizes([left_width, right_width])
+
         run_tab_grid = QGridLayout()
-
-        run_tab_grid.addWidget(self.run_tab_frame0, 0, 0)
-        run_tab_grid.addWidget(self.run_tab_table, 1, 0)
-        run_tab_grid.addWidget(self.run_tab_frame1, 2, 0)
-        run_tab_grid.addWidget(self.run_tab_frame2, 0, 1, 3, 1)
-
-        run_tab_grid.setRowStretch(0, 1)
-        run_tab_grid.setRowStretch(1, 10)
-        run_tab_grid.setRowStretch(2, 2)
-
-        run_tab_grid.setColumnStretch(0, 2)
-        run_tab_grid.setColumnStretch(1, 1)
-
+        run_tab_grid.addWidget(run_tab_splitter, 0, 0)
         self.run_tab.setLayout(run_tab_grid)
 
         # Generate sub-frames
@@ -1253,7 +1266,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 host_ip = self.run_tab_table.item(row, 0).text().strip()
                 self.run_tab_table.item(row, 2).setText(self.run_tab_host_dic[host_ip]['output_message'])
 
-                if 'Timeout exceeded' in self.run_tab_host_dic[host_ip]['output_message']:
+                if 'pexpect.exceptions.TIMEOUT' in self.run_tab_host_dic[host_ip]['output_message']:
                     self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
                     self.update_run_tab_frame1('*Error*: Host "' + str(self.run_tab_table.item(row, 0).text().strip()) + '" ssh timeout.', color='red')
                 elif (run_command == 'hostname') and (self.run_tab_host_dic[host_ip]['output_message'] != self.run_tab_table.item(row, 1).text().strip()):
@@ -1311,18 +1324,31 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.log_tab_table.itemClicked.connect(self.log_tab_check_click)
 
         # self.log_tab - Grid
+        log_tab_left_container = QWidget()
+        log_tab_left_grid = QGridLayout()
+        log_tab_left_grid.addWidget(self.log_tab_frame0, 0, 0)
+        log_tab_left_grid.addWidget(self.log_tab_table, 1, 0)
+        log_tab_left_grid.setRowStretch(0, 1)
+        log_tab_left_grid.setRowStretch(1, 20)
+        log_tab_left_container.setLayout(log_tab_left_grid)
+
+        log_tab_right_container = QWidget()
+        log_tab_right_grid = QGridLayout()
+        log_tab_right_grid.addWidget(self.log_tab_frame1, 0, 0)
+        log_tab_right_container.setLayout(log_tab_right_grid)
+
+        log_tab_splitter = QSplitter(Qt.Horizontal)
+        log_tab_splitter.setHandleWidth(1)
+        log_tab_splitter.addWidget(log_tab_left_container)
+        log_tab_splitter.addWidget(log_tab_right_container)
+
+        total_width = self.width()
+        left_width = int(total_width * 2 / 3)
+        right_width = total_width - left_width
+        log_tab_splitter.setSizes([left_width, right_width])
+
         log_tab_grid = QGridLayout()
-
-        log_tab_grid.addWidget(self.log_tab_frame0, 0, 0)
-        log_tab_grid.addWidget(self.log_tab_table, 1, 0)
-        log_tab_grid.addWidget(self.log_tab_frame1, 0, 1, 2, 1)
-
-        log_tab_grid.setRowStretch(0, 1)
-        log_tab_grid.setRowStretch(1, 20)
-
-        log_tab_grid.setColumnStretch(0, 2)
-        log_tab_grid.setColumnStretch(1, 1)
-
+        log_tab_grid.addWidget(log_tab_splitter, 0, 0)
         self.log_tab.setLayout(log_tab_grid)
 
         # Generate sub-frames
@@ -1618,7 +1644,7 @@ class XtermWidget(QWidget):
         self.process = QProcess(self)
         layout = QGridLayout()
         self.setLayout(layout)
-        self.cmd = f'xterm -bg black -fg white -into {str(int(self.winId()))} -geometry 100x100 -sb -l -lc -lf /dev/stdout -e /bin/bash -c "ps -o tt=;bash" | tee'
+        self.cmd = f'xterm -bg black -fg white -into {str(int(self.winId()))} -geometry 200x200 -sb -l -lc -lf /dev/stdout -e /bin/bash -c "ps -o tt=;bash" | tee'
         self.process.start(self.cmd)
 
     def resizeEvent(self, event):
@@ -1630,7 +1656,12 @@ class XtermWidget(QWidget):
             self.process.terminate()
             self.process.waitForFinished()
 
-        self.process.start(self.cmd)
+            if self.process.state() == QProcess.Running:
+                self.process.kill()
+                self.process.waitForFinished()
+
+        if self.process.state() == QProcess.NotRunning:
+            self.process.start(self.cmd)
 
     def closeEvent(self, a0):
         super(XtermWidget, self).closeEvent(a0)
