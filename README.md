@@ -1,4 +1,4 @@
-**Version:** V2.0 (2024.10.26)
+**Version:** V2.0
 
 
 ## What's batchRun?
@@ -23,10 +23,6 @@ Execute below command under install directory.
 ## Quick start
 Execute command `batch_run --help` to get usage information.
 Execute command `batch_run --gui` to enable GUI mode.
-* Below is a demo on how to get group-host configuration.
-
-   ![list_hosts_demo](data/demo/list_hosts_demo.gif)
-
 * Below is a demo on how to run command with command line.
 
    ![command_line_run_demo](data/demo/command_line_run_demo.gif)
@@ -34,6 +30,10 @@ Execute command `batch_run --gui` to enable GUI mode.
 * Below is a demo on how to run command with GUI.
 
    ![gui_run_demo](data/demo/gui_run_demo.gif)
+
+* Below is a demo on how to filter host with OS/CPU/MEM.
+
+   ![host_filter_demo](data/demo/host_filter_demo.gif)
 
 
 ## Configuration
