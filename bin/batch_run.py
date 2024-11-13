@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.10.28'
+VERSION_DATE = '2024.11.07'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -162,6 +162,13 @@ def read_args():
     if not args.command:
         common.bprint('No command is specified.', level='Error')
         sys.exit(1)
+    else:
+        scripts_dir = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/scripts'
+        command_name = args.command[0]
+
+        for root, dirs, files in os.walk(scripts_dir):
+            if command_name in files:
+                args.command[0] = os.path.join(root, command_name)
 
     # Reset default timeout setting.
     if not args.timeout:
