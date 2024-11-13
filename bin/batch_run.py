@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.07'
+VERSION_DATE = '2024.11.13'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -288,6 +288,8 @@ class BatchRun():
         self.command_missing_string_list = ['command not found', 'Command not found.', 'No such file or directory']
         self.timeout_string_list = ['Timeout exceeded', 'pexpect.exceptions.TIMEOUT']
 
+        self.password_host_list = self.get_password_hosts()
+
     def save_command(self):
         """
         Save command info into command history file under config.db_path/log.
@@ -344,6 +346,23 @@ class BatchRun():
         else:
             print(message, end=end)
 
+    def get_password_hosts(self):
+        """
+        Get all specified host(s) from user password file.
+        """
+        password_host_list = []
+        password_file = str(config.db_path) + '/password/' + str(self.user)
+
+        if os.path.exists(password_file):
+            with open(password_file, 'r') as PF:
+                for line in PF.readlines():
+                    host_name = line.split()[1]
+
+                    if host_name != 'default':
+                        password_host_list.append(host_name)
+
+        return password_host_list
+
     def get_ssh_command(self, host, host_ip, ssh_port, command_list):
         """
         Get full ssh command based on host & ssh_port.
@@ -376,6 +395,28 @@ class BatchRun():
 
         return ssh_command
 
+    def get_right_host_format(self, host):
+        """
+        For host, return host by default.
+        If host_ip in self.password_host_list, return host_ip.
+        If host_name in self.password_host_list, return host_name.
+        """
+        right_host_format = host
+
+        if 'host_ip' in self.specified_host_dic[host]:
+            for host_ip in self.specified_host_dic[host]['host_ip']:
+                if host_ip in self.password_host_list:
+                    right_host_format = host_ip
+                    break
+
+        if 'host_name' in self.specified_host_dic[host]:
+            for host_name in self.specified_host_dic[host]['host_name']:
+                if host_name in self.password_host_list:
+                    right_host_format = host_name
+                    break
+
+        return right_host_format
+
     def execute_ssh_command(self, host, host_ip, ssh_port):
         """
         Get complate ssh command and execute it.
@@ -406,7 +447,8 @@ class BatchRun():
         # Execute ssh command.
         # ssh_run usage:
         # common_secure.ssh_run(ssh_command, user, host, password, timeout=10)
-        stdout_lines = common_secure.ssh_run(ssh_command, self.user, host, self.password, self.timeout)
+        right_host_format = self.get_right_host_format(host)
+        stdout_lines = common_secure.ssh_run(ssh_command, self.user, right_host_format, self.password, self.timeout)
 
         # Print command output message as expected method.
         if self.output_message_level == 4:
@@ -425,7 +467,8 @@ class BatchRun():
                 self.save_out('    Ssh timeout, rerun.', host=host)
                 self.save_log('    Ssh timeout, rerun.')
 
-            stdout_lines = common_secure.ssh_run(ssh_command, self.user, host, self.password, self.timeout)
+            right_host_format = self.get_right_host_format(host)
+            stdout_lines = common_secure.ssh_run(ssh_command, self.user, right_host_format, self.password, self.timeout)
 
         if not stdout_lines:
             if self.output_message_level == 2:
@@ -493,7 +536,8 @@ class BatchRun():
         command_list = copy.deepcopy(self.command_list)
         command_list[0] = local_script_path
         ssh_command = self.get_ssh_command(host, host_ip, ssh_port, command_list)
-        stdout_lines = common_secure.ssh_run(ssh_command, self.user, host, self.password, self.timeout)
+        right_host_format = self.get_right_host_format(host)
+        stdout_lines = common_secure.ssh_run(ssh_command, self.user, right_host_format, self.password, self.timeout)
 
         return stdout_lines
 
