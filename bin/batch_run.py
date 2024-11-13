@@ -403,17 +403,18 @@ class BatchRun():
         """
         right_host_format = host
 
-        if 'host_ip' in self.specified_host_dic[host]:
-            for host_ip in self.specified_host_dic[host]['host_ip']:
-                if host_ip in self.password_host_list:
-                    right_host_format = host_ip
-                    break
+        if self.password_host_list:
+            if 'host_name' in self.specified_host_dic[host]:
+                for host_name in self.specified_host_dic[host]['host_name']:
+                    if host_name in self.password_host_list:
+                        right_host_format = host_name
+                        break
 
-        if 'host_name' in self.specified_host_dic[host]:
-            for host_name in self.specified_host_dic[host]['host_name']:
-                if host_name in self.password_host_list:
-                    right_host_format = host_name
-                    break
+            if (right_host_format == host) and ('host_ip' in self.specified_host_dic[host]):
+                for host_ip in self.specified_host_dic[host]['host_ip']:
+                    if host_ip in self.password_host_list:
+                        right_host_format = host_ip
+                        break
 
         return right_host_format
 
