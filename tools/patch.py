@@ -6,8 +6,8 @@ import shutil
 import filecmp
 import argparse
 
-sys.path.insert(0, os.environ['BATCH_RUN_INSTALL_PATH'])
-from common import common
+sys.path.insert(0, str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/common')
+import common
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 
