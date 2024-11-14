@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.13'
+VERSION_DATE = '2024.11.14'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -363,6 +363,17 @@ class BatchRun():
 
         return password_host_list
 
+    def convert_to_raw_string(self, input_string):
+        raw_string = ""
+
+        for char in input_string:
+            if char in ['\a', '\b', '\f', '\n', '\r', '\t', '\v', '\'', '\"', '\\']:
+                raw_string += '\\' + char
+            else:
+                raw_string += char
+
+        return raw_string
+
     def get_ssh_command(self, host, host_ip, ssh_port, command_list):
         """
         Get full ssh command based on host & ssh_port.
@@ -390,8 +401,7 @@ class BatchRun():
 
         # Add specified command.
         ssh_command = str(ssh_command) + ' ' + str(' '.join(command_list))
-        ssh_command = re.sub("'", "\\'", ssh_command)
-        ssh_command = re.sub('"', '\\"', ssh_command)
+        ssh_command = self.convert_to_raw_string(ssh_command)
 
         return ssh_command
 
