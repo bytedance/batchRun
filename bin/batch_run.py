@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.14'
+VERSION_DATE = '2024.11.20'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -367,7 +367,7 @@ class BatchRun():
         raw_string = ""
 
         for char in input_string:
-            if char in ['\a', '\b', '\f', '\n', '\r', '\t', '\v', '\'', '\"', '\\']:
+            if char in ['\a', '\b', '\f', '\n', '\r', '\t', '\v', '\'', '\"', '\\', r'(', r')', r' ']:
                 raw_string += '\\' + char
             else:
                 raw_string += char
@@ -399,9 +399,12 @@ class BatchRun():
             else:
                 ssh_command = str(ssh_command) + ' ' + str(host)
 
+        # Switch command_list char.
+        for i, command_string in enumerate(command_list):
+            command_list[i] = self.convert_to_raw_string(command_string)
+
         # Add specified command.
         ssh_command = str(ssh_command) + ' ' + str(' '.join(command_list))
-        ssh_command = self.convert_to_raw_string(ssh_command)
 
         return ssh_command
 
