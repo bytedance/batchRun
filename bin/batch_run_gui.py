@@ -29,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.13'
+VERSION_DATE = '2024.11.22'
 
 
 # Solve some unexpected warning message.
@@ -1264,16 +1264,21 @@ Please be free to contact liyanqing1987@163.com if any question."""
             # Update self.run_tab_table.
             for row in range(self.run_tab_table.rowCount()):
                 host_ip = self.run_tab_table.item(row, 0).text().strip()
+                host_name = self.run_tab_table.item(row, 1).text().strip()
+                output_message = self.run_tab_host_dic[host_ip]['output_message']
 
                 if self.run_tab_host_dic[host_ip]['state'] == Qt.Checked:
-                    self.run_tab_table.item(row, 2).setText(self.run_tab_host_dic[host_ip]['output_message'])
+                    self.run_tab_table.item(row, 2).setText(output_message)
 
-                    if 'pexpect.exceptions.TIMEOUT' in self.run_tab_host_dic[host_ip]['output_message']:
+                    if 'pexpect.exceptions.TIMEOUT' in output_message:
                         self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
-                        self.update_run_tab_frame1('*Error*: Host "' + str(self.run_tab_table.item(row, 0).text().strip()) + '" ssh timeout.', color='red')
-                    elif (run_command == 'hostname') and (self.run_tab_host_dic[host_ip]['output_message'] != self.run_tab_table.item(row, 1).text().strip()):
-                        self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
-                        self.update_run_tab_frame1('*Warning*: Host "' + str(self.run_tab_table.item(row, 0).text().strip()) + '", hostname is "' + str(self.run_tab_table.item(row, 1).text().strip()) + '" in host.list, but "' + str(self.run_tab_host_dic[host_ip]['output_message']) + '" with hostname command.', color='yellow')
+                        self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '" ssh timeout.', color='red')
+                    elif (run_command == 'hostname') and (output_message != host_name):
+                        if (' ' in host_name) and re.search(r'\b' + str(output_message) + r'\b', host_name):
+                            self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
+                        else:
+                            self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
+                            self.update_run_tab_frame1('*Warning*: Host "' + str(host_ip) + '", hostname is "' + str(host_name) + '" in host.list, but "' + str(output_message) + '" with hostname command.', color='yellow')
                     else:
                         self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
 
@@ -1646,7 +1651,7 @@ class XtermWidget(QWidget):
         self.process = QProcess(self)
         layout = QGridLayout()
         self.setLayout(layout)
-        self.cmd = f'xterm -bg black -fg white -into {str(int(self.winId()))} -geometry 200x200 -sb -l -lc -lf /dev/stdout -e /bin/bash -c "ps -o tt=;bash" | tee'
+        self.cmd = f'xterm -bg black -fg gray -into {str(int(self.winId()))} -geometry 200x200 -sb -l -lc -lf /dev/stdout -e /bin/bash -c "ps -o tt=;bash" | tee'
         self.process.start(self.cmd)
 
     def resizeEvent(self, event):
