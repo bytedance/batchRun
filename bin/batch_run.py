@@ -377,17 +377,6 @@ class BatchRun():
 
         return password_host_list
 
-    def convert_to_raw_string(self, input_string):
-        raw_string = ""
-
-        for char in input_string:
-            if char in ['\a', '\b', '\f', '\n', '\r', '\t', '\v', '\'', '\"', '\\', r'(', r')', r' ']:
-                raw_string += '\\' + char
-            else:
-                raw_string += char
-
-        return raw_string
-
     def get_ssh_command(self, host, host_ip, ssh_port, command_list):
         """
         Get full ssh command based on host & ssh_port.
@@ -412,10 +401,6 @@ class BatchRun():
                 ssh_command = str(ssh_command) + ' ' + str(host_ip)
             else:
                 ssh_command = str(ssh_command) + ' ' + str(host)
-
-        # Switch command_list char.
-        for i, command_string in enumerate(command_list):
-            command_list[i] = self.convert_to_raw_string(command_string)
 
         # Add specified command.
         ssh_command = str(ssh_command) + ' "' + str(' '.join(command_list)) + '"'
