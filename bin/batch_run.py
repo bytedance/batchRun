@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.20'
+VERSION_DATE = '2024.11.29'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()

@@ -29,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.0'
-VERSION_DATE = '2024.11.22'
+VERSION_DATE = '2024.11.29'
 
 
 # Solve some unexpected warning message.
