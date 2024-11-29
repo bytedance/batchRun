@@ -279,7 +279,7 @@ class BatchRun():
         self.specified_host_dic = specified_host_dic
         self.user = user
         self.password = password
-        self.command_list = command_list
+        self.command_list = self.preprocess_command_string(command_list)
         self.parallel = parallel
         self.timeout = timeout
         self.output_message_level = output_message_level
@@ -289,6 +289,20 @@ class BatchRun():
         self.timeout_string_list = ['Timeout exceeded', 'pexpect.exceptions.TIMEOUT']
 
         self.password_host_list = self.get_password_hosts()
+
+    def preprocess_command_string(self, command_list):
+        """
+        Remove unreasonable escape for "-".
+        """
+        new_command_list = []
+
+        for command_string in command_list:
+            if re.search(r'\\-', command_string):
+                command_string = re.sub(r'\\-', '-', command_string)
+
+            new_command_list.append(command_string)
+
+        return new_command_list
 
     def save_command(self):
         """
@@ -404,7 +418,7 @@ class BatchRun():
             command_list[i] = self.convert_to_raw_string(command_string)
 
         # Add specified command.
-        ssh_command = str(ssh_command) + ' ' + str(' '.join(command_list))
+        ssh_command = str(ssh_command) + ' "' + str(' '.join(command_list)) + '"'
 
         return ssh_command
 
