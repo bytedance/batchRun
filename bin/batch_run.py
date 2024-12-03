@@ -285,7 +285,8 @@ class BatchRun():
         self.output_message_level = output_message_level
         self.output_file = output_file
 
-        self.command_missing_string_list = ['command not found', 'Command not found.', 'No such file or directory']
+        # Below self.command_missing_compile_list is only for bash/csh/tcsh.
+        self.command_missing_compile_list = [re.compile(r'^bash:\s+(\S+):\s+command not found...\s*$'), re.compile(r'^bash:\s+(\S+):\s+No such file or directory\s*$'), re.compile(r'^(\S+):\s+Command not found.$')]
         self.timeout_string_list = ['Timeout exceeded', 'pexpect.exceptions.TIMEOUT']
 
         self.password_host_list = self.get_password_hosts()
@@ -403,7 +404,12 @@ class BatchRun():
                 ssh_command = str(ssh_command) + ' ' + str(host)
 
         # Add specified command.
-        ssh_command = str(ssh_command) + ' "' + str(' '.join(command_list)) + '"'
+        command_string = ' '.join(command_list)
+
+        if '"' in command_string:
+            ssh_command = str(ssh_command) + " '" + str(command_string) + "'"
+        else:
+            ssh_command = str(ssh_command) + ' "' + str(command_string) + '"'
 
         return ssh_command
 
@@ -469,12 +475,15 @@ class BatchRun():
             self.save_log('    ==== output ====')
 
         # Auto-rerun for "command missing" and "timeout" conditions.
-        if self.check_command_missing(stdout_lines) and shutil.which(self.command_list[0]):
+        missing_command = self.check_command_missing(stdout_lines)
+        missing_command_path = shutil.which(missing_command)
+
+        if missing_command and missing_command_path:
             if self.output_message_level == 4:
                 self.save_out('    Command missing, scp and rerun.', host=host)
                 self.save_log('    Command missing, scp and rerun.')
 
-            stdout_lines = self.scp_and_rerun(host, host_ip, ssh_port, stdout_lines)
+            stdout_lines = self.scp_and_rerun(host, host_ip, ssh_port, missing_command_path)
         elif self.check_timeout(stdout_lines):
             if self.output_message_level == 4:
                 self.save_out('    Ssh timeout, rerun.', host=host)
@@ -509,11 +518,13 @@ class BatchRun():
         Search for command missing string on stdout_lines.
         """
         if stdout_lines and (len(stdout_lines) == 1):
-            for command_missing_string in self.command_missing_string_list:
-                if re.match(r'^.*' + str(command_missing_string) + r'\s*$', stdout_lines[0]) and (not re.search(r'cannot access', stdout_lines[0])):
-                    return True
+            for line in stdout_lines:
+                for command_missing_compile in self.command_missing_compile_list:
+                    if command_missing_compile.match(line):
+                        my_match = command_missing_compile.match(line)
+                        return my_match.group(1)
 
-        return False
+        return ''
 
     def check_timeout(self, stdout_lines):
         """
@@ -527,21 +538,18 @@ class BatchRun():
 
         return False
 
-    def scp_and_rerun(self, host, host_ip, ssh_port, orig_stdout_lines):
+    def scp_and_rerun(self, host, host_ip, ssh_port, missing_command_path):
         """
-        If command missing on remote host, scp command/script to remove host local and rerun.
+        If command missing on remote host, scp missing_command_path to remove host local and rerun.
         """
-        stdout_lines = orig_stdout_lines
-
         # Scp command/script to remove host /tmp directory.
-        script_path = shutil.which(self.command_list[0])
-        script_name = os.path.basename(script_path)
+        script_name = os.path.basename(missing_command_path)
         local_script_path = '/tmp/' + str(script_name)
 
         if ssh_port:
-            scp_command = 'scp -p -P ' + str(ssh_port) + ' ' + str(script_path) + ' ' + str(host) + ':' + str(local_script_path)
+            scp_command = 'scp -p -P ' + str(ssh_port) + ' ' + str(missing_command_path) + ' ' + str(host) + ':' + str(local_script_path)
         else:
-            scp_command = 'scp -p ' + str(script_path) + ' ' + str(host) + ':' + str(local_script_path)
+            scp_command = 'scp -p ' + str(missing_command_path) + ' ' + str(host) + ':' + str(local_script_path)
 
         common_secure.scp_run(scp_command, self.user, host, self.password, self.timeout)
 
