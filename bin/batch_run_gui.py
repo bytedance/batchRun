@@ -1240,7 +1240,11 @@ Please be free to contact liyanqing1987@163.com if any question."""
             self.update_run_tab_frame1('* Run command "' + str(run_command) + '" parallel with below batch_run command.')
 
             output_file = str(tmp_batchRun_user_current_dir) + '/HOST'
-            batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run --hosts ' + str(host_list_file) + ' --command \"' + str(run_command) + '\" --parallel ' + str(len(run_tab_selected_host_ip_list)) + ' --timeout ' + str(timeout) + ' --output_message_level 1 --output_file ' + str(output_file)
+
+            if '"' in run_command:
+                batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run --hosts ' + str(host_list_file) + " --command '" + str(run_command) + "' --parallel " + str(len(run_tab_selected_host_ip_list)) + ' --timeout ' + str(timeout) + ' --output_message_level 1 --output_file ' + str(output_file)
+            else:
+                batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run --hosts ' + str(host_list_file) + ' --command \"' + str(run_command) + '\" --parallel ' + str(len(run_tab_selected_host_ip_list)) + ' --timeout ' + str(timeout) + ' --output_message_level 1 --output_file ' + str(output_file)
 
             my_show_message = ShowMessage('Info', '快马加鞭X' + str(len(run_tab_selected_host_ip_list)) + ', running ...')
             my_show_message.start()
