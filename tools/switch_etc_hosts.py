@@ -8,7 +8,14 @@
 import os
 import re
 import sys
+import copy
 import argparse
+
+sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/config')
+import config
+
+sys.path.insert(0, os.environ['BATCH_RUN_INSTALL_PATH'])
+from common import common
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 
@@ -19,23 +26,31 @@ def read_args():
     """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-e', '--expected_ips',
-                        nargs='+',
-                        default=[],
-                        help='Specify expected ip(s), support regular expressions.')
-    parser.add_argument('-E', '--excluded_ips',
-                        nargs='+',
-                        default=[],
-                        help='Specify excluded ip(s), support regular expressions.')
     parser.add_argument('-i', '--input_file',
                         default='/etc/hosts',
                         help='Specify input file, default is "/etc/hosts".')
     parser.add_argument('-o', '--output_file',
-                        default='./host.list',
-                        help='Specify output file, default is "./host.list".')
+                        default=str(config.host_list),
+                        help='Specify output file, default is "' + str(config.host_list) + '".')
     parser.add_argument('-a', '--append',
                         default='',
                         help='Append configuration file into output file.')
+    parser.add_argument('-eh', '--expected_hosts',
+                        nargs='+',
+                        default=[],
+                        help='Specify expected ip(s), support regular expressions.')
+    parser.add_argument('-eg', '--expected_groups',
+                        nargs='+',
+                        default=[],
+                        help='Specify expected group(s), support regular expressions.')
+    parser.add_argument('-EH', '--excluded_hosts',
+                        nargs='+',
+                        default=[],
+                        help='Specify excluded ip(s), support regular expressions.')
+    parser.add_argument('-EG', '--excluded_groups',
+                        nargs='+',
+                        default=[],
+                        help='Specify excluded group(s), support regular expressions.')
     parser.add_argument('-r', '--rewrite',
                         action='store_true',
                         default=False,
@@ -49,31 +64,33 @@ def read_args():
 
     # input_file must exists.
     if not os.path.exists(args.input_file):
-        print('*Error*: "' + str(args.input_file) + '": No such input file.')
+        common.bprint('"' + str(args.input_file) + '": No such input file.', level='Error')
         sys.exit(1)
 
     # Will exit if output_file exists without rewrite mode.
     if os.path.exists(args.output_file) and (not args.rewrite):
-        print('*Error*: Output file "' + str(args.output_file) + '" exists, please remote it, or enable rewrite mode.')
+        common.bprint('Output file "' + str(args.output_file) + '" exists, please remote it, or enable rewrite mode.', level='Error')
         sys.exit(1)
 
     # Check append file exists or not.
     if args.append and (not os.path.exists(args.append)):
         args.append = ''
 
-    return (args.expected_ips, args.excluded_ips, args.input_file, args.output_file, args.append, args.tool)
+    return (args.input_file, args.output_file, args.append, args.expected_hosts, args.expected_groups, args.excluded_hosts, args.excluded_groups, args.tool)
 
 
 class SwitchEtcHosts():
     """
     Switch /etc/hosts (or similar) file into batchRun host.list file.
     """
-    def __init__(self, expected_ip_list, excluded_ip_list, input_file, output_file, append_file, tool):
-        self.expected_ip_list = expected_ip_list
-        self.excluded_ip_list = excluded_ip_list
+    def __init__(self, input_file, output_file, append_file, expected_host_list, expected_group_list, excluded_host_list, excluded_group_list, tool):
         self.input_file = input_file
         self.output_file = output_file
         self.append_file = append_file
+        self.expected_host_list = expected_host_list
+        self.expected_group_list = expected_group_list
+        self.excluded_host_list = excluded_host_list
+        self.excluded_group_list = excluded_group_list
         self.tool = tool
 
     def parse_input_file(self):
@@ -98,13 +115,13 @@ class SwitchEtcHosts():
                         group = my_match.group(1)
 
                         if group in input_dic:
-                            print('*Error*: Group "' + str(group) + '" is defined repeatedly.')
+                            common.bprint('Group "' + str(group) + '" is defined repeatedly.', level='Error')
                             sys.exit(1)
                         else:
                             input_dic[group] = {}
                     else:
-                        print('*Warning*: Comment line, igonre')
-                        print('           ' + str(line))
+                        common.bprint('Comment line, igonre', level='Warning')
+                        common.bprint(line, color=33, display_method=1, indent=11)
                 elif re.match(r'^\s*((([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])\.){3}([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5]))\s+(.+?)\s*(#.*?)?\s*$', line):
                     my_match = re.match(r'^\s*((([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])\.){3}([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5]))\s+(.+?)\s*(#.*?)?\s*$', line)
                     host_ip = my_match.group(1)
@@ -117,33 +134,9 @@ class SwitchEtcHosts():
                         ssh_port = my_match.group(1)
 
                     if not group:
-                        print('*Warning*: Group missing for below line, igonre')
-                        print('           ' + str(line))
+                        common.bprint('Group missing for below line, igonre', level='Warning')
+                        common.bprint(line, color=33, display_method=1, indent=11)
                     else:
-                        # Filter excluded ip(s).
-                        if self.excluded_ip_list:
-                            continue_mark = False
-
-                            for excluded_ip in self.excluded_ip_list:
-                                if (host_ip == excluded_ip) or re.match(excluded_ip, host_ip):
-                                    continue_mark = True
-                                    break
-
-                            if continue_mark:
-                                continue
-
-                        # Filter expected ip(s).
-                        if self.expected_ip_list:
-                            continue_mark = True
-
-                            for expected_ip in self.expected_ip_list:
-                                if (host_ip == expected_ip) or re.match(expected_ip, host_ip):
-                                    continue_mark = False
-                                    break
-
-                            if continue_mark:
-                                continue
-
                         # Save host_ip into input_dic.
                         input_dic[group].setdefault(host_ip, {})
                         input_dic[group][host_ip].setdefault('host_name', [])
@@ -155,10 +148,63 @@ class SwitchEtcHosts():
                         if ssh_port:
                             input_dic[group][host_ip].setdefault('ssh_port', ssh_port)
                 else:
-                    print('*Warning*: Meaningless line, igonre')
-                    print('           ' + str(line))
+                    common.bprint('Meaningless line, igonre', level='Warning')
+                    common.bprint(line, color=33, display_method=1, indent=11)
 
         return input_dic
+
+    def filter_input_dic(self, input_dic):
+        """
+        Filter input_dic with self.expected_host_list/self.expected_group_list/self.excluded_host_list/self.excluded_group_list.
+        """
+        filtered_input_dic = {}
+
+        # Fill with self.expected_group_list:
+        for group in input_dic.keys():
+            if (not self.expected_group_list) or (group in self.expected_group_list) or self.fuzzy_match_in(group, self.expected_group_list):
+                filtered_input_dic[group] = input_dic[group]
+
+        # Filter with self.excluded_group_list:
+        if self.excluded_group_list:
+            group_list = list(filtered_input_dic.keys())
+
+            for group in group_list:
+                if (group in self.excluded_group_list) or self.fuzzy_match_in(group, self.excluded_group_list):
+                    del filtered_input_dic[group]
+
+        # Filter with self.expected_host_list:
+        if self.expected_host_list:
+            for group in filtered_input_dic.keys():
+                group_dic = copy.deepcopy(filtered_input_dic[group])
+
+                for host in group_dic.keys():
+                    if (host not in self.expected_host_list) and (not self.fuzzy_match_in(host, self.expected_host_list)):
+                        del filtered_input_dic[group][host]
+
+        # Filter with self.excluded_host_list:
+        if self.excluded_host_list:
+            for group in filtered_input_dic.keys():
+                group_dic = copy.deepcopy(filtered_input_dic[group])
+
+                for host in group_dic.keys():
+                    if (host in self.excluded_host_list) or self.fuzzy_match_in(host, self.excluded_host_list):
+                        del filtered_input_dic[group][host]
+
+        return filtered_input_dic
+
+    def fuzzy_match_in(self, specified_item, fuzzy_item_list):
+        """
+        If there is a fuzzy match between specified_item and any item in fuzzy_item_list, return True; otherwise, return False.
+        """
+        try:
+            for fuzzy_item in fuzzy_item_list:
+                if re.match(fuzzy_item, specified_item):
+                    return True
+        except Exception as error:
+            common.bprint('Failed on fuzzy matching "' + str(specified_item) + '" with "' + str(fuzzy_item_list) + '".', level='Error')
+            common.bprint(error, color=31, display_method=1, indent=9)
+
+        return False
 
     def write_output_file(self, input_dic):
         """
@@ -188,11 +234,12 @@ class SwitchEtcHosts():
                         for line in AF.readlines():
                             OF.write(str(line).strip() + '\n')
 
-            print('')
-            print('Output File : ' + str(self.output_file))
+            common.bprint('')
+            common.bprint('Output File : ' + str(self.output_file))
 
     def run(self):
         input_dic = self.parse_input_file()
+        input_dic = self.filter_input_dic(input_dic)
         self.write_output_file(input_dic)
 
 
@@ -200,8 +247,8 @@ class SwitchEtcHosts():
 # Main Process #
 ################
 def main():
-    (expected_ip_list, excluded_ip_list, input_file, output_file, append_file, tool) = read_args()
-    my_switch_etc_hosts = SwitchEtcHosts(expected_ip_list, excluded_ip_list, input_file, output_file, append_file, tool)
+    (input_file, output_file, append_file, expected_host_list, expected_group_list, excluded_host_list, excluded_group_list, tool) = read_args()
+    my_switch_etc_hosts = SwitchEtcHosts(input_file, output_file, append_file, expected_host_list, expected_group_list, excluded_host_list, excluded_group_list, tool)
     my_switch_etc_hosts.run()
 
 

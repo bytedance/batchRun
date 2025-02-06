@@ -44,10 +44,11 @@ def read_args():
                         help='Specify the user password for SSH login to specified host.')
     parser.add_argument('-P', '--parallel',
                         type=int,
-                        default=1,
+                        default=0,
                         help='Specify the parallelism for batch_run.')
     parser.add_argument('-t', '--timeout',
                         type=int,
+                        default=20,
                         help='Specify the timeout for batch_run.')
     parser.add_argument('-o', '--output_dir',
                         default=str(config.db_path) + '/host_info',
@@ -67,29 +68,79 @@ def read_args():
 
 class SampleHostInfo():
     def __init__(self, host_list, group_list, user, password, parallel, timeout, output_dir):
+        self.batch_run_command = self.get_batch_run_command(host_list, group_list, user, password, parallel, timeout)
         self.output_dir = output_dir
-        self.batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run'
+        self.host_list_file = str(self.output_dir) + '/host_list.json'
+        self.latest_host_info_file = str(self.output_dir) + '/host_info.json'
+        self.old_host_info_file = os.path.realpath(self.latest_host_info_file)
+        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_host_info_file = str(self.output_dir) + '/host_info.json.' + str(current_time)
+
+    def get_batch_run_command(self, host_list=[], group_list=[], user='', password='', parallel=0, timeout=20):
+        """
+        Get default batch_run command (without run command).
+        """
+        batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run'
 
         if host_list:
-            self.batch_run_command = str(self.batch_run_command) + ' --hosts ' + str(' '.join(host_list))
+            batch_run_command = str(batch_run_command) + ' --hosts ' + str(' '.join(host_list))
 
         if group_list:
-            self.batch_run_command = str(self.batch_run_command) + ' --groups ' + str(' '.join(group_list))
+            batch_run_command = str(batch_run_command) + ' --groups ' + str(' '.join(group_list))
 
         if user:
-            self.batch_run_command = str(self.batch_run_command) + ' --user ' + str(user)
+            batch_run_command = str(batch_run_command) + ' --user ' + str(user)
 
         if password:
-            self.batch_run_command = str(self.batch_run_command) + ' --password ' + str(password)
+            batch_run_command = str(batch_run_command) + ' --password ' + str(password)
 
-        self.batch_run_command = str(self.batch_run_command) + ' --parallel ' + str(parallel)
+        batch_run_command = str(batch_run_command) + ' --parallel ' + str(parallel)
 
         if timeout:
-            self.batch_run_command = str(self.batch_run_command) + ' --timeout ' + str(timeout)
+            batch_run_command = str(batch_run_command) + ' --timeout ' + str(timeout)
 
-    def collect_host_info(self):
+        return batch_run_command
+
+    def cleanup(self):
+        command = 'rm -rf *.info host_list.json'
+        common.bprint('\n>>> Clean up ' + str(self.output_dir) + ' ...')
+        common.bprint(command, indent=4)
+        os.chdir(self.output_dir)
+        os.system(command)
+        os.chdir(CWD)
+
+    def sample_host_list_info(self):
+        command = str(self.batch_run_command) + ' --list --output_file ' + str(self.host_list_file)
+        common.bprint('\n>>> Sampling host list information ...')
+        common.bprint(command, indent=4)
+        os.system(command)
+
+    def sample_host_os_hard_info(self):
+        sample_command = 'lsb_release -a; hostnamectl; lscpu; free -g'
+        command = str(self.batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.info'
+        common.bprint('\n>>> Sampling host os/cpu/mem information ...')
+        common.bprint(command, indent=4)
+        os.system(command)
+
+    def collect_host_os_hard_info(self):
+        common.bprint('\n>>> Collecting host information ...')
+        host_list_dic = {}
+
+        if os.path.exists(self.host_list_file):
+            with open(self.host_list_file, 'r') as HLF:
+                host_list_dic = json.loads(HLF.read())
+
+        host_info_dic = self.collect_host_info(host_list_dic)
+        host_info_dic = self.update_host_info(host_info_dic)
+
+        with open(self.current_host_info_file, 'w') as HIF:
+            HIF.write(str(json.dumps(host_info_dic, ensure_ascii=False, indent=4)) + '\n')
+
+        common.bprint('Host info has been saved to file "' + str(self.current_host_info_file) + '".', indent=4)
+
+    def collect_host_info(self, host_list_dic):
         """
-        Collect host os/hardware information from files under self.output_dir.
+        Collect host os/hardware information from sampled files under self.output_dir.
         """
         host_info_dic = {}
 
@@ -110,7 +161,9 @@ class SampleHostInfo():
                 if re.match(r'^(\S+)\.info$', file):
                     my_match = re.match(r'^(\S+)\.info$', file)
                     host_ip = my_match.group(1)
-                    host_info_dic.setdefault(host_ip, {'server_type': '',
+                    host_info_dic.setdefault(host_ip, {'host_name': [],
+                                                       'groups': [],
+                                                       'server_type': '',
                                                        'os': '',
                                                        'cpu_architecture': '',
                                                        'cpu_thread': 0,
@@ -122,6 +175,13 @@ class SampleHostInfo():
                                                        'mem_size_unit': 'GB',
                                                        'swap_size': 0,
                                                        'swap_size_unit': 'GB'})
+
+                    if host_ip in host_list_dic:
+                        if 'host_name' in host_list_dic[host_ip]:
+                            host_info_dic[host_ip]['host_name'] = host_list_dic[host_ip]['host_name']
+
+                        if 'groups' in host_list_dic[host_ip]:
+                            host_info_dic[host_ip]['groups'] = host_list_dic[host_ip]['groups']
 
                     with open(os.path.join(root, file), 'r') as IF:
                         for line in IF.readlines():
@@ -159,15 +219,15 @@ class SampleHostInfo():
 
         return host_info_dic
 
-    def update_host_info(self, host_info_dic, old_host_info_file):
+    def update_host_info(self, host_info_dic):
         """
-        Get old host_info_dic from old_host_info_file.
+        Get old host_info_dic from self.old_host_info_file.
         If host_info missing on host_info_dic, get it from old host_info_dic.
         """
         old_host_info_dic = {}
 
-        if os.path.exists(old_host_info_file):
-            with open(old_host_info_file, 'r') as OHIF:
+        if os.path.exists(self.old_host_info_file):
+            with open(self.old_host_info_file, 'r') as OHIF:
                 old_host_info_dic = json.loads(OHIF.read())
 
         if old_host_info_dic:
@@ -178,56 +238,38 @@ class SampleHostInfo():
 
         return host_info_dic
 
+    def link_host_info_file(self):
+        common.bprint('\n>>> Link current host info file into host_info.json')
+        common.bprint('ln -s ' + str(self.current_host_info_file) + ' ' + str(self.latest_host_info_file), indent=4)
+
+        if os.path.exists(self.latest_host_info_file):
+            try:
+                os.remove(self.latest_host_info_file)
+            except Exception as error:
+                common.bprint('Failed on removing ' + str(self.latest_host_info_file) + '": ' + str(error), indent=4, level='Error')
+                sys.exit(1)
+
+        try:
+            os.symlink(self.current_host_info_file, self.latest_host_info_file)
+        except Exception as error:
+            common.bprint('Failed on Linking "' + str(self.current_host_info_file) + '" into "' + str(self.latest_host_info_file) + '": ' + str(error), indent=4, level='Error')
+            sys.exit(1)
+
     def sample_host_info(self):
-        """
-        Sample host os information with command "lsb_release -a; hostnamectl".
-        Sample host hardware information with command "lshw".
-        Collect host information into "self.output_dir/host_info.json".
-        """
-        # Save old host_info.json.
-        current_host_info_file = str(self.output_dir) + '/host_info.json'
-        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        old_host_info_file = str(self.output_dir) + '/host_info.json.' + str(current_time)
-
-        if os.path.exists(current_host_info_file):
-            command = 'mv ' + str(current_host_info_file) + ' ' + str(old_host_info_file)
-            common.bprint('>>> Move ' + str(current_host_info_file) + ' to ' + str(old_host_info_file) + ' ...')
-            common.bprint(command, indent=4)
-            os.chdir(self.output_dir)
-            os.system(command)
-            os.chdir(CWD)
-
         # Clean up self.output_dir.
-        command = 'rm -rf *.info host_list.json host_info.json'
-        common.bprint('>>> Clean up ' + str(self.output_dir) + ' ...')
-        common.bprint(command, indent=4)
-        os.chdir(self.output_dir)
-        os.system(command)
-        os.chdir(CWD)
+        self.cleanup()
 
         # Sample host list information.
-        command = str(self.batch_run_command) + ' --list --output_file ' + str(self.output_dir) + '/host_list.json'
-        common.bprint('>>> Sampling host list information ...')
-        common.bprint(command, indent=4)
-        os.system(command)
+        self.sample_host_list_info()
 
         # Sample host os/cpu/mem information.
-        sample_command = 'lsb_release -a; hostnamectl; lscpu; free -g'
-        command = str(self.batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.info'
-        common.bprint('>>> Sampling host os/cpu/mem information ...')
-        common.bprint(command, indent=4)
-        os.system(command)
+        self.sample_host_os_hard_info()
 
-        # Collect host information.
-        common.bprint('>>> Collecting host information ...')
-        host_info_dic = self.collect_host_info()
-        host_info_dic = self.update_host_info(host_info_dic, old_host_info_file)
-        host_info_file = str(self.output_dir) + '/host_info.json'
+        # Collect host os/cpu/mem information.
+        self.collect_host_os_hard_info()
 
-        with open(host_info_file, 'w') as HIF:
-            HIF.write(str(json.dumps(host_info_dic, ensure_ascii=False, indent=4)) + '\n')
-
-        common.bprint('    Host info has been saved to file "' + str(host_info_file) + '".')
+        # Link self.current_host_info_file into self.latest_host_info_file.
+        self.link_host_info_file()
 
 
 ################
