@@ -100,7 +100,7 @@ def gen_shell_tools():
     """
     Generate shell scripts under <BATCH_RUN_INSTALL_PATH>.
     """
-    tool_list = ['bin/batch_run_gui', 'tools/encrypt_python', 'tools/patch', 'tools/sample_host_info', 'tools/save_password', 'tools/switch_etc_hosts']
+    tool_list = ['bin/batch_run_gui', 'tools/encrypt_python', 'tools/network_scan', 'tools/patch', 'tools/sample_host_info', 'tools/sample_host_queue', 'tools/sample_host_stat', 'tools/save_password', 'tools/show_top_file', 'tools/switch_etc_hosts']
     ld_library_path_setting = get_ld_library_path_setting()
 
     for tool_name in tool_list:
@@ -154,7 +154,7 @@ host_list = '""" + str(host_list) + """'
 db_path = '""" + str(CWD) + """/db'
 
 # Default ssh command.
-default_ssh_command = "ssh -o StrictHostKeyChecking=no -t -q"
+default_ssh_command = 'ssh -o StrictHostKeyChecking=no -t -q'
 
 # Support host_ip fuzzy matching, could be "True" or "False".
 fuzzy_match = True
@@ -162,6 +162,21 @@ fuzzy_match = True
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
 parallel_timeout = 20
+
+# Command for switch_etc_hosts.
+switch_etc_hosts_command = '""" + str(CWD) + """/tools/switch_etc_hosts --rewrite --tool batchRun'
+
+# Command for network_scan.
+network_scan_command = '""" + str(CWD) + """/tools/network_scan --alive'
+
+# Command for sample_host_info.
+sample_host_info_command = '""" + str(CWD) + """/tools/sample_host_info --groups ALL'
+
+# Command for sample_host_queue.
+sample_host_queue_command = '""" + str(CWD) + """/tools/sample_host_queue --groups ALL'
+
+# Command for sample_host_stat.
+sample_host_stat_command = '""" + str(CWD) + """/tools/sample_host_stat --groups ALL'
 """)
 
             os.chmod(config_file, 0o777)

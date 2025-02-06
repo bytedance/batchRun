@@ -1,4 +1,4 @@
-**Version:** V2.0
+**Version:** V2.2
 
 
 ## What's batchRun?
@@ -60,4 +60,10 @@ More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_m
 | V1.1    | (2023.07) | Support host_ip & host_name multi-mapping. |
 |         |           | Remove LSF supporting.                     |
 | V1.2    | (2024.08) | Add host info sampling function.           |
-| V2.0    | (2024.10) | Add GUI.                                   |
+| V2.0    | (2024.10) | Add GUI with GROUP/HOST/RUN/LOG tabs.      |
+| V2.1    | (2025.01) | Add SCAN tab on GUI.                       |
+|         |           | Add STAT tab on GUI.                       |
+|         |           | Add scheduler/cluster/queue on GROUP tab.  |
+|         |           | Fix the id authentication bug on crontab.  |
+| V2.2    | (2025.02) | Merge GROUP&HOST tabs on GUI.              |
+|         |           | Add ASSET tab on GUI.                      |
