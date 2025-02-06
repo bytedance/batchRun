@@ -31,9 +31,9 @@ Execute command `batch_run --gui` to enable GUI mode.
 
    ![gui_run_demo](data/demo/gui_run_demo.gif)
 
-* Below is a demo on how to filter host with OS/CPU/MEM.
+* Below is a demo on how to view host info with GUI.
 
-   ![host_filter_demo](data/demo/host_filter_demo.gif)
+   ![host_filter_demo](data/demo/gui_info_demo.gif)
 
 
 ## Configuration
