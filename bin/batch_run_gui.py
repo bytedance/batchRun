@@ -2628,7 +2628,10 @@ Please be free to contact liyanqing1987@163.com if any question."""
                     if 'pexpect.exceptions.TIMEOUT' in output_message:
                         self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
                         self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '" ssh timeout.', color='red')
-                    elif (run_command == 'hostname') and (output_message != host_name):
+                    elif "'default'" in output_message:
+                        self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
+                        self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '" ssh fail.', color='red')
+                    elif (run_command == 'hostname') and (output_message != host_name) and output_message:
                         if (' ' in host_name) and re.search(r'\b' + str(output_message) + r'\b', host_name):
                             self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
                         else:
