@@ -156,66 +156,64 @@ class SampleHostInfo():
         mem_size_compile = re.compile(r'^\s*Mem:\s*(\d+)\s+.*$')
         swap_size_compile = re.compile(r'^\s*Swap:\s*(\d+)\s+.*$')
 
-        for root, dirs, files in os.walk(self.output_dir):
-            for file in files:
-                if re.match(r'^(\S+)\.info$', file):
-                    my_match = re.match(r'^(\S+)\.info$', file)
-                    host_ip = my_match.group(1)
-                    host_info_dic.setdefault(host_ip, {'host_name': [],
-                                                       'groups': [],
-                                                       'server_type': '',
-                                                       'os': '',
-                                                       'cpu_architecture': '',
-                                                       'cpu_thread': 0,
-                                                       'thread_per_core': 0,
-                                                       'cpu_model': '',
-                                                       'cpu_frequency': 0.0,
-                                                       'cpu_frequency_unit': 'GHz',
-                                                       'mem_size': 0,
-                                                       'mem_size_unit': 'GB',
-                                                       'swap_size': 0,
-                                                       'swap_size_unit': 'GB'})
+        for host_ip in host_list_dic.keys():
+            host_info_dic.setdefault(host_ip, {'host_name': [],
+                                               'groups': [],
+                                               'server_type': '',
+                                               'os': '',
+                                               'cpu_architecture': '',
+                                               'cpu_thread': 0,
+                                               'thread_per_core': 0,
+                                               'cpu_model': '',
+                                               'cpu_frequency': 0.0,
+                                               'cpu_frequency_unit': 'GHz',
+                                               'mem_size': 0,
+                                               'mem_size_unit': 'GB',
+                                               'swap_size': 0,
+                                               'swap_size_unit': 'GB'})
 
-                    if host_ip in host_list_dic:
-                        if 'host_name' in host_list_dic[host_ip]:
-                            host_info_dic[host_ip]['host_name'] = host_list_dic[host_ip]['host_name']
+            if 'host_name' in host_list_dic[host_ip]:
+                host_info_dic[host_ip]['host_name'] = host_list_dic[host_ip]['host_name']
 
-                        if 'groups' in host_list_dic[host_ip]:
-                            host_info_dic[host_ip]['groups'] = host_list_dic[host_ip]['groups']
+            if 'groups' in host_list_dic[host_ip]:
+                host_info_dic[host_ip]['groups'] = host_list_dic[host_ip]['groups']
 
-                    with open(os.path.join(root, file), 'r') as IF:
-                        for line in IF.readlines():
-                            if server_type_compile.match(line):
-                                my_match = server_type_compile.match(line)
-                                host_info_dic[host_ip]['server_type'] = my_match.group(1)
-                            elif os1_compile.match(line):
-                                my_match = os1_compile.match(line)
+            host_info_file = str(self.output_dir) + '/' + str(host_ip) + '.info'
+
+            if os.path.exists(host_info_file):
+                with open(host_info_file, 'r') as HIF:
+                    for line in HIF.readlines():
+                        if server_type_compile.match(line):
+                            my_match = server_type_compile.match(line)
+                            host_info_dic[host_ip]['server_type'] = my_match.group(1)
+                        elif os1_compile.match(line):
+                            my_match = os1_compile.match(line)
+                            host_info_dic[host_ip]['os'] = my_match.group(1)
+                        elif os2_compile.match(line):
+                            if not host_info_dic[host_ip]['os']:
+                                my_match = os2_compile.match(line)
                                 host_info_dic[host_ip]['os'] = my_match.group(1)
-                            elif os2_compile.match(line):
-                                if not host_info_dic[host_ip]['os']:
-                                    my_match = os2_compile.match(line)
-                                    host_info_dic[host_ip]['os'] = my_match.group(1)
-                            elif cpu_architecture_compile.match(line):
-                                my_match = cpu_architecture_compile.match(line)
-                                host_info_dic[host_ip]['cpu_architecture'] = my_match.group(1)
-                            elif cpu_thread_compile.match(line):
-                                my_match = cpu_thread_compile.match(line)
-                                host_info_dic[host_ip]['cpu_thread'] = int(my_match.group(1))
-                            elif thread_per_core_compile.match(line):
-                                my_match = thread_per_core_compile.match(line)
-                                host_info_dic[host_ip]['thread_per_core'] = int(my_match.group(1))
-                            elif cpu_model_compile.match(line):
-                                my_match = cpu_model_compile.match(line)
-                                host_info_dic[host_ip]['cpu_model'] = my_match.group(1)
-                            elif cpu_frequency_compile.match(line):
-                                my_match = cpu_frequency_compile.match(line)
-                                host_info_dic[host_ip]['cpu_frequency'] = round(float(my_match.group(1))/1000, 1)
-                            elif mem_size_compile.match(line):
-                                my_match = mem_size_compile.match(line)
-                                host_info_dic[host_ip]['mem_size'] = int(my_match.group(1))
-                            elif swap_size_compile.match(line):
-                                my_match = swap_size_compile.match(line)
-                                host_info_dic[host_ip]['swap_size'] = int(my_match.group(1))
+                        elif cpu_architecture_compile.match(line):
+                            my_match = cpu_architecture_compile.match(line)
+                            host_info_dic[host_ip]['cpu_architecture'] = my_match.group(1)
+                        elif cpu_thread_compile.match(line):
+                            my_match = cpu_thread_compile.match(line)
+                            host_info_dic[host_ip]['cpu_thread'] = int(my_match.group(1))
+                        elif thread_per_core_compile.match(line):
+                            my_match = thread_per_core_compile.match(line)
+                            host_info_dic[host_ip]['thread_per_core'] = int(my_match.group(1))
+                        elif cpu_model_compile.match(line):
+                            my_match = cpu_model_compile.match(line)
+                            host_info_dic[host_ip]['cpu_model'] = my_match.group(1)
+                        elif cpu_frequency_compile.match(line):
+                            my_match = cpu_frequency_compile.match(line)
+                            host_info_dic[host_ip]['cpu_frequency'] = round(float(my_match.group(1))/1000, 1)
+                        elif mem_size_compile.match(line):
+                            my_match = mem_size_compile.match(line)
+                            host_info_dic[host_ip]['mem_size'] = int(my_match.group(1))
+                        elif swap_size_compile.match(line):
+                            my_match = swap_size_compile.match(line)
+                            host_info_dic[host_ip]['swap_size'] = int(my_match.group(1))
 
         return host_info_dic
 
