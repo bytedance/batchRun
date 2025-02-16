@@ -567,7 +567,7 @@ class ParseHostList():
                             # If match group.
                             self.host_list_dic[group].setdefault('exclude_groups', [])
 
-                            if exclude_item not in self.host_list_dic[group]['exclude_groups']:
+                            if (exclude_item != group) and (exclude_item not in self.host_list_dic[group]['exclude_groups']):
                                 self.host_list_dic[group]['exclude_groups'].append(exclude_item)
                         elif exclude_item in self.host_ip_dic:
                             # If match host_ip.
@@ -584,18 +584,28 @@ class ParseHostList():
                             if exclude_item not in self.host_list_dic[group]['exclude_hosts']['host_name']:
                                 self.host_list_dic[group]['exclude_hosts']['host_name'].append(exclude_item)
                         else:
-                            bprint('Invalid setting on "' + str(self.host_list_file) + '", it could only exclude group/host_ip/host_name.', level='Error')
-                            bprint(line, color='red', display_method=1, indent=9)
-                            sys.exit(1)
+                            find_mark = False
+
+                            if re.search(r'\*', exclude_item):
+                                exclude_item = re.sub(r'\*', r'.*', exclude_item)
+
+                                for known_group in self.host_list_dic.keys():
+                                    if re.match(r'^' + str(exclude_item) + '$', known_group):
+                                        find_mark = True
+                                        self.host_list_dic[group].setdefault('exclude_groups', [])
+
+                                        if (known_group != group) and (known_group not in self.host_list_dic[group]['exclude_groups']):
+                                            self.host_list_dic[group]['exclude_groups'].append(known_group)
+
+                            if not find_mark:
+                                bprint('Invalid setting on "' + str(self.host_list_file) + '", it could only exclude group/host_ip/host_name.', level='Error')
+                                bprint(line, color='red', display_method=1, indent=9)
+                                sys.exit(1)
                     else:
                         # For sub_group.
                         sub_group = line
 
-                        if sub_group not in self.host_list_dic:
-                            bprint('Invalid setting on "' + str(self.host_list_file) + '".', level='Error')
-                            bprint(line, color='red', display_method=1, indent=9)
-                            sys.exit(1)
-                        else:
+                        if sub_group in self.host_list_dic:
                             self.host_list_dic[group].setdefault('sub_groups', [])
 
                             if sub_group not in self.host_list_dic[group]['sub_groups']:
@@ -603,6 +613,31 @@ class ParseHostList():
                             else:
                                 bprint('Invalid setting on "' + str(self.host_list_file) + '".', level='Error')
                                 bprint('Sub-group "' + str(sub_group) + '" is defined repeatedly on group "' + str(group) + '".', color='red', display_method=1, indent=9)
+                                sys.exit(1)
+                        else:
+                            find_mark = False
+
+                            if (line == 'all') or (line == 'ALL'):
+                                find_mark = True
+                                self.host_list_dic[group].setdefault('sub_groups', [])
+
+                                for sub_group in self.host_list_dic.keys():
+                                    if (sub_group != group) and (sub_group not in self.host_list_dic[group]['sub_groups']):
+                                        self.host_list_dic[group]['sub_groups'].append(sub_group)
+                            elif re.search(r'\*', sub_group):
+                                sub_group = re.sub(r'\*', r'.*', sub_group)
+
+                                for known_group in self.host_list_dic.keys():
+                                    if re.match(r'^' + str(sub_group) + '$', known_group):
+                                        find_mark = True
+                                        self.host_list_dic[group].setdefault('sub_groups', [])
+
+                                        if (known_group != group) and (known_group not in self.host_list_dic[group]['sub_groups']):
+                                            self.host_list_dic[group]['sub_groups'].append(known_group)
+
+                            if not find_mark:
+                                bprint('Invalid setting on "' + str(self.host_list_file) + '".', level='Error')
+                                bprint(line, color='red', display_method=1, indent=9)
                                 sys.exit(1)
 
     def expand_host_list_dic(self):
@@ -613,7 +648,7 @@ class ParseHostList():
             group_hosts_dic = self.get_group_hosts_dic(group)
             self.expanded_host_list_dic[group] = group_hosts_dic
 
-    def get_group_hosts_dic(self, group):
+    def get_group_hosts_dic(self, group, parent_group=''):
         """
         Expand group setting to host_ip setting.
         """
@@ -627,7 +662,14 @@ class ParseHostList():
             # Save group "sub_groups" hosts into group_hosts_dic.
             if 'sub_groups' in self.host_list_dic[group]:
                 for sub_group in self.host_list_dic[group]['sub_groups']:
-                    sub_group_hosts_dic = self.get_group_hosts_dic(sub_group)
+                    if ('exclude_groups' in self.host_list_dic[group]) and (sub_group in self.host_list_dic[group]['exclude_groups']):
+                        continue
+
+                    if sub_group == parent_group:
+                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(parent_group) + '.', level='Error')
+                        sys.exit(1)
+
+                    sub_group_hosts_dic = self.get_group_hosts_dic(sub_group, parent_group=group)
 
                     for host_ip in sub_group_hosts_dic.keys():
                         if host_ip in group_hosts_dic:
@@ -654,7 +696,11 @@ class ParseHostList():
             # Exclude group "exclude_groups" from group_hosts_dic
             if 'exclude_groups' in self.host_list_dic[group]:
                 for exclude_group in self.host_list_dic[group]['exclude_groups']:
-                    exclude_group_hosts_dic = self.get_group_hosts_dic(exclude_group)
+                    if sub_group == parent_group:
+                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(parent_group) + '.', level='Error')
+                        sys.exit(1)
+
+                    exclude_group_hosts_dic = self.get_group_hosts_dic(exclude_group, parent_group=group)
 
                     for host_ip in exclude_group_hosts_dic.keys():
                         if host_ip in group_hosts_dic:
@@ -730,18 +776,40 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
             my_match = re.match(r'^~(\S+)$', group)
             excluded_group = my_match.group(1)
 
-            if excluded_group not in host_list_class.expanded_host_list_dic:
-                bprint('Invalid setting on host_list file.', level='Error')
-                bprint(str(group) + ': Invalid host group.', color='red', display_method=1, indent=9)
-                sys.exit(1)
-            else:
+            if excluded_group in host_list_class.expanded_host_list_dic:
                 excluded_group_list.append(excluded_group)
-        else:
-            if group not in host_list_class.expanded_host_list_dic:
-                bprint(str(group) + ': Invalid host group.', level='Error')
-                sys.exit(1)
             else:
+                find_mark = False
+
+                if re.search(r'\*', excluded_group):
+                    excluded_group = re.sub(r'\*', r'.*', excluded_group)
+
+                    for known_group in host_list_class.host_list_dic.keys():
+                        if re.match(r'^' + str(excluded_group) + '$', known_group):
+                            find_mark = True
+                            excluded_group_list.append(known_group)
+
+                if not find_mark:
+                    bprint('Invalid setting on host_list file.', level='Error')
+                    bprint(str(group) + ': Invalid host group.', color='red', display_method=1, indent=9)
+                    sys.exit(1)
+        else:
+            if group in host_list_class.expanded_host_list_dic:
                 expected_group_list.append(group)
+            else:
+                find_mark = False
+
+                if re.search(r'\*', group):
+                    group = re.sub(r'\*', r'.*', group)
+
+                    for known_group in host_list_class.host_list_dic.keys():
+                        if re.match(r'^' + str(group) + '$', known_group):
+                            find_mark = True
+                            expected_group_list.append(known_group)
+
+                if not find_mark:
+                    bprint(str(group) + ': Invalid host group.', level='Error')
+                    sys.exit(1)
 
     # Remove excluded group(s) from expected_group_list.
     copy_expected_group_list = copy.deepcopy(expected_group_list)
@@ -909,13 +977,13 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
             else:
                 fuzzy_find_mark = False
 
-                # With fuzzy_match mode.
-                # If specify a unknown-suspected incomplate host_ip/host_name.
-                if config.fuzzy_match:
+                if re.search(r'\*', host):
+                    host = re.sub(r'\*', r'.*', host)
+
                     # fuzzy matching host_ip.
                     # specified_host_dic = {<host_ip>: {'host_name': [<host_name>,], 'ssh_port': <ssh_port>, 'groups': [<group>,]}}
                     for host_ip in host_list_class.host_ip_dic.keys():
-                        if re.search(host, host_ip):
+                        if re.match(r'^' + str(host) + '$', host_ip):
                             if not check_repetitiveness(host_ip, specified_host_dic):
                                 print('[FUZZY MATCH] ' + str(host) + ' -> ' + str(host_ip))
                                 fuzzy_find_mark = True
@@ -943,7 +1011,7 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
                     # fuzzy matching host_name.
                     # specified_host_dic = {<host_ip>: {'host_name': [<host_name>,], 'ssh_port': <ssh_port>, 'groups': [<group>,]}}
                     for host_name in host_list_class.host_name_dic.keys():
-                        if re.search(host, host_name):
+                        if re.match(r'^' + str(host) + '$', host_name):
                             for host_ip in host_list_class.host_name_dic[host_name]:
                                 if not check_repetitiveness(host_ip, specified_host_dic):
                                     print('[FUZZY MATCH] ' + str(host) + ' -> ' + str(host_name) + ' -> ' + str(host_ip))

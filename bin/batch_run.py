@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.2'
-VERSION_DATE = '2025.02.05'
+VERSION_DATE = '2025.02.16'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -163,12 +163,22 @@ def read_args():
         common.bprint('No command is specified.', level='Error')
         sys.exit(1)
     else:
+        # Try to find command under batchRun scripts directory.
         scripts_dir = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/scripts'
         command_name = args.command[0]
 
         for root, dirs, files in os.walk(scripts_dir):
             if command_name in files:
                 args.command[0] = os.path.join(root, command_name)
+
+        # Filter illegal command.
+        format_command = ' '.join(args.command)
+        format_command = re.sub(r'\\', '', format_command)
+
+        for illegal_command in config.illegal_command_list:
+            if (format_command in config.illegal_command_list) or re.match(r'^' + str(illegal_command) + '$', format_command):
+                common.bprint('Illegal command is specified.', level='Error')
+                sys.exit(1)
 
     # Reset default timeout setting.
     if not args.timeout:

@@ -10,6 +10,7 @@ import re
 import sys
 import copy
 import json
+import time
 import getpass
 import datetime
 import qdarkstyle
@@ -28,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.2'
-VERSION_DATE = '2025.02.05'
+VERSION_DATE = '2025.02.16'
 
 
 # Solve some unexpected warning message.
@@ -143,9 +144,10 @@ class MainWindow(QMainWindow):
         self.run_tab_host_dic = {}
 
         for group in self.host_list_class.expanded_host_list_dic.keys():
-            for host_ip in self.host_list_class.expanded_host_list_dic[group].keys():
-                host_name = '  '.join(self.host_list_class.expanded_host_list_dic[group][host_ip]['host_name'])
-                self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
+            if (('RUN' in self.host_list_class.expanded_host_list_dic) and (group == 'RUN')) or ('RUN' not in self.host_list_class.expanded_host_list_dic):
+                for host_ip in self.host_list_class.expanded_host_list_dic[group].keys():
+                    host_name = '  '.join(self.host_list_class.expanded_host_list_dic[group][host_ip]['host_name'])
+                    self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
 
     def init_ui(self):
         """
@@ -2555,10 +2557,27 @@ Please be free to contact liyanqing1987@163.com if any question."""
         run_command = self.run_tab_command_line.text().strip()
 
         if run_command:
+            # Filter illegal command.
+            format_command = ' '.join(run_command.split())
+            format_command = re.sub(r'\\', '', format_command)
+
+            for illegal_command in config.illegal_command_list:
+                if (format_command in config.illegal_command_list) or re.match(r'^' + str(illegal_command) + '$', format_command):
+                    my_show_message = ShowMessage('Error', 'Illegal command "' + str(run_command) + '".')
+                    my_show_message.start()
+                    time.sleep(3)
+                    my_show_message.terminate()
+                    self.update_run_tab_frame1('*Error*: Illegal command "' + str(run_command) + '".', color='red')
+                    return
+
             # Check timeout setting.
             timeout = self.run_tab_timeout_line.text().strip()
 
             if not re.match(r'^\d+$', timeout):
+                my_show_message = ShowMessage('Error', 'Wrong format of Timeout "' + str(timeout) + '", it must be an integer.')
+                my_show_message.start()
+                time.sleep(3)
+                my_show_message.terminate()
                 self.update_run_tab_frame1('*Error*: Wrong format of Timeout "' + str(timeout) + '", it must be an integer.', color='red')
                 return
 
@@ -3074,7 +3093,7 @@ class ShowMessage(QThread):
     def __init__(self, title, message):
         super(ShowMessage, self).__init__()
         self.title = title
-        self.message = message
+        self.message = re.sub(r'"', '\\"', message)
 
     def run(self):
         command = 'python3 ' + str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/message.py --title "' + str(self.title) + '" --message "' + str(self.message) + '"'

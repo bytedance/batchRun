@@ -156,12 +156,12 @@ db_path = '""" + str(CWD) + """/db'
 # Default ssh command.
 default_ssh_command = 'ssh -o StrictHostKeyChecking=no -t -q'
 
-# Support host_ip fuzzy matching, could be "True" or "False".
-fuzzy_match = True
-
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
 parallel_timeout = 20
+
+# Illegal command list.
+illegal_command_list = ['rm -rf /', 'rm -rf ~', 'rm -rf ~/']
 
 # Command for switch_etc_hosts.
 switch_etc_hosts_command = '""" + str(CWD) + """/tools/switch_etc_hosts --rewrite --tool batchRun'
