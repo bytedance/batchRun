@@ -27,7 +27,7 @@ import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 VERSION = 'V2.2'
-VERSION_DATE = '2025.02.16'
+VERSION_DATE = '2025.02.25'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -177,7 +177,7 @@ def read_args():
 
         for illegal_command in config.illegal_command_list:
             if (format_command in config.illegal_command_list) or re.match(r'^' + str(illegal_command) + '$', format_command):
-                common.bprint('Illegal command is specified.', level='Error')
+                common.bprint('Illegal command!', level='Error')
                 sys.exit(1)
 
     # Reset default timeout setting.

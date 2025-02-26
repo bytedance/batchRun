@@ -29,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.2'
-VERSION_DATE = '2025.02.16'
+VERSION_DATE = '2025.02.25'
 
 
 # Solve some unexpected warning message.
@@ -140,14 +140,21 @@ class MainWindow(QMainWindow):
             with open(host_info_file, 'r') as HIF:
                 self.host_info_dic = json.loads(HIF.read())
 
-        # self.run_tab_host_dic: get selected host_ip(s)/host_name(s) from GROUP or HOST tab.
-        self.run_tab_host_dic = {}
+        # self.run_tab_table_dic: get selected host_ip(s)/host_name(s) from GROUP or HOST tab.
+        self.run_tab_table_dic = {}
 
         for group in self.host_list_class.expanded_host_list_dic.keys():
             if (('RUN' in self.host_list_class.expanded_host_list_dic) and (group == 'RUN')) or ('RUN' not in self.host_list_class.expanded_host_list_dic):
                 for host_ip in self.host_list_class.expanded_host_list_dic[group].keys():
-                    host_name = '  '.join(self.host_list_class.expanded_host_list_dic[group][host_ip]['host_name'])
-                    self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
+                    if host_ip not in self.run_tab_table_dic.keys():
+                        host_name = '  '.join(self.host_list_class.expanded_host_list_dic[group][host_ip]['host_name'])
+
+                        if host_ip in self.host_group_relationship_dic.keys():
+                            groups = '  '.join(self.host_group_relationship_dic[host_ip])
+                        else:
+                            groups = group
+
+                        self.run_tab_table_dic[host_ip] = {'hidden': False, 'state': Qt.Checked, 'host_name': host_name, 'groups': groups, 'output_message': ''}
 
     def init_ui(self):
         """
@@ -605,8 +612,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.scan_tab_table.setShowGrid(True)
         self.scan_tab_table.setSortingEnabled(True)
         self.scan_tab_table.setColumnCount(0)
-        self.scan_tab_table.setColumnCount(9)
         self.scan_tab_table_title_list = ['zone', 'network', 'host_ip', 'host_name', 'groups', 'packet', 'received', 'packet_loss', 'rtt_avg']
+        self.scan_tab_table.setColumnCount(len(self.scan_tab_table_title_list))
         self.scan_tab_table.setHorizontalHeaderLabels(self.scan_tab_table_title_list)
 
         self.scan_tab_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -636,8 +643,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
             for network in scan_tab_table_dic[zone].keys():
                 for host_ip in scan_tab_table_dic[zone][network].keys():
                     i += 1
-                    host_name = ' '.join(scan_tab_table_dic[zone][network][host_ip]['host_name'])
-                    groups = ' '.join(scan_tab_table_dic[zone][network][host_ip]['groups'])
+                    host_name = scan_tab_table_dic[zone][network][host_ip]['host_name']
+                    groups = scan_tab_table_dic[zone][network][host_ip]['groups']
                     packet = scan_tab_table_dic[zone][network][host_ip]['packet']
                     received = scan_tab_table_dic[zone][network][host_ip]['received']
                     packet_loss = scan_tab_table_dic[zone][network][host_ip]['packet_loss']
@@ -743,11 +750,15 @@ Please be free to contact liyanqing1987@163.com if any question."""
                                     scan_tab_table_dic[zone][network][host_ip] = self.network_scan_dic[zone][network][host_ip]
 
                                     if host_ip in self.host_list_class.host_ip_dic.keys():
-                                        scan_tab_table_dic[zone][network][host_ip]['host_name'] = self.host_list_class.host_ip_dic[host_ip]['host_name']
-                                        scan_tab_table_dic[zone][network][host_ip]['groups'] = self.host_list_class.host_ip_dic[host_ip]['groups']
+                                        scan_tab_table_dic[zone][network][host_ip]['host_name'] = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
+
+                                        if host_ip in self.host_group_relationship_dic.keys():
+                                            scan_tab_table_dic[zone][network][host_ip]['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
+                                        else:
+                                            scan_tab_table_dic[zone][network][host_ip]['groups'] = ''
                                     else:
-                                        scan_tab_table_dic[zone][network][host_ip]['host_name'] = []
-                                        scan_tab_table_dic[zone][network][host_ip]['groups'] = []
+                                        scan_tab_table_dic[zone][network][host_ip]['host_name'] = ''
+                                        scan_tab_table_dic[zone][network][host_ip]['groups'] = ''
 
         return scan_tab_table_dic
 # For scan TAB (end) #
@@ -882,36 +893,18 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_name" item.
             j += 1
+            item = QTableWidgetItem(asset_tab_table_dic[host_ip]['host_name'])
 
-            if host_ip in self.host_list_class.host_ip_dic.keys():
-                host_name = self.host_list_class.host_ip_dic[host_ip]['host_name']
-            else:
-                host_name = []
-
-            if isinstance(host_name, list):
-                item = QTableWidgetItem('  '.join(host_name))
-            else:
-                item = QTableWidgetItem(host_name)
-
-            if not host_name:
+            if not asset_tab_table_dic[host_ip]['host_name']:
                 item.setBackground(QBrush(Qt.red))
 
             self.asset_tab_table.setItem(i, j, item)
 
             # Fill "group" item.
             j += 1
+            item = QTableWidgetItem(asset_tab_table_dic[host_ip]['groups'])
 
-            if host_ip in self.host_group_relationship_dic:
-                groups = self.host_group_relationship_dic[host_ip]
-            else:
-                groups = []
-
-            if isinstance(groups, list):
-                item = QTableWidgetItem('  '.join(groups))
-            else:
-                item = QTableWidgetItem(groups)
-
-            if not groups:
+            if not asset_tab_table_dic[host_ip]['groups']:
                 item.setBackground(QBrush(Qt.red))
 
             self.asset_tab_table.setItem(i, j, item)
@@ -922,7 +915,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 item_string = asset_tab_table_dic[host_ip][host_ip_attribute]
 
                 if isinstance(item_string, list):
-                    item_string = ' '.join(item_string)
+                    item_string = '  '.join(item_string)
 
                 item = QTableWidgetItem(item_string)
                 self.asset_tab_table.setItem(i, j, item)
@@ -967,6 +960,22 @@ Please be free to contact liyanqing1987@163.com if any question."""
             with open(host_asset_file, 'r') as HAF:
                 host_asset_dic = json.loads(HAF.read())
 
+        for host_ip in host_asset_dic.keys():
+            # Add "host_ip" under host_asset_dic[host_ip].
+            host_asset_dic[host_ip]['host_ip'] = host_ip
+
+            # Add "host_name" under host_asset_dic[host_ip].
+            if host_ip in self.host_list_class.host_ip_dic.keys():
+                host_asset_dic[host_ip]['host_name'] = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
+            else:
+                host_asset_dic[host_ip]['host_name'] = ''
+
+            # Add "groups" under host_asset_dic[host_ip].
+            if host_ip in self.host_group_relationship_dic:
+                host_asset_dic[host_ip]['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
+            else:
+                host_asset_dic[host_ip]['groups'] = ''
+
         return host_asset_dic
 
     def asset_to_host_tab(self):
@@ -999,12 +1008,13 @@ Please be free to contact liyanqing1987@163.com if any question."""
         """
         Get selected host_ip list, and jump to RUN tab, generate self.run_tab_table.
         """
-        self.run_tab_host_dic = {}
+        self.run_tab_table_dic = {}
 
         for row in range(self.asset_tab_table.rowCount()):
             host_ip = self.asset_tab_table.item(row, 0).text()
             host_name = self.asset_tab_table.item(row, 1).text()
-            self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
+            groups = self.asset_tab_table.item(row, 2).text()
+            self.run_tab_table_dic[host_ip] = {'hidden': False, 'state': Qt.Checked, 'host_name': host_name, 'groups': groups, 'output_message': ''}
 
         self.gen_run_tab_table()
         self.main_tab.setCurrentWidget(self.run_tab)
@@ -1523,8 +1533,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.host_tab_table.setShowGrid(True)
         self.host_tab_table.setSortingEnabled(True)
         self.host_tab_table.setColumnCount(0)
-        self.host_tab_table.setColumnCount(16)
         self.host_tab_table_title_list = ['host_ip', 'host_name', 'groups', 'server_type', 'os', 'cpu_arch', 'cpu_model', 'cpu_thread', 'thread_per_core', 'cpu_freq (GHz)', 'mem (GB)', 'swap (GB)', 'ssh_port', 'scheduler', 'cluster', 'queues']
+        self.host_tab_table.setColumnCount(len(self.host_tab_table_title_list))
         self.host_tab_table.setHorizontalHeaderLabels(self.host_tab_table_title_list)
         self.host_tab_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
         self.host_tab_table.horizontalHeader().customContextMenuRequested.connect(self.hide_host_tab_table_column)
@@ -1536,7 +1546,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         i = -1
 
         for host_ip in host_tab_table_dic.keys():
-            group_list = host_tab_table_dic[host_ip]['groups']
+            groups = host_tab_table_dic[host_ip]['groups']
             host_name = host_tab_table_dic[host_ip]['host_name']
             server_type = host_tab_table_dic[host_ip].get('server_type', '')
             os = host_tab_table_dic[host_ip].get('os', '')
@@ -1561,17 +1571,12 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_name" item.
             j += 1
-
-            if isinstance(host_name, list):
-                item = QTableWidgetItem('  '.join(host_name))
-            else:
-                item = QTableWidgetItem(host_name)
-
+            item = QTableWidgetItem(host_name)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "group" item.
             j += 1
-            item = QTableWidgetItem('  '.join(group_list))
+            item = QTableWidgetItem(groups)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "server_type" item.
@@ -1803,6 +1808,10 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                 # Save host_ip related info into host_tab_table_dic.
                 host_tab_table_dic[host_ip] = self.host_info_dic[host_ip]
+
+                if isinstance(host_tab_table_dic[host_ip]['host_name'], list):
+                    host_tab_table_dic[host_ip]['host_name'] = '  '.join(host_tab_table_dic[host_ip]['host_name'])
+
                 host_tab_table_dic[host_ip]['scheduler'] = scheduler
                 host_tab_table_dic[host_ip]['cluster'] = cluster
                 host_tab_table_dic[host_ip]['queues'] = queue_list
@@ -1813,7 +1822,10 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         # Update groups setting for host_ip.
         for host_ip in host_tab_table_dic.keys():
-            host_tab_table_dic[host_ip]['groups'] = self.host_group_relationship_dic[host_ip]
+            if host_ip in self.host_group_relationship_dic.keys():
+                host_tab_table_dic[host_ip]['groups'] = ' '.join(self.host_group_relationship_dic[host_ip])
+            else:
+                host_tab_table_dic[host_ip]['groups'] = ''
 
         return host_tab_table_dic
 
@@ -1847,12 +1859,13 @@ Please be free to contact liyanqing1987@163.com if any question."""
         """
         Get selected host_ip list, and jump to RUN tab, generate self.run_tab_table.
         """
-        self.run_tab_host_dic = {}
+        self.run_tab_table_dic = {}
 
         for row in range(self.host_tab_table.rowCount()):
             host_ip = self.host_tab_table.item(row, 0).text()
             host_name = self.host_tab_table.item(row, 1).text()
-            self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
+            groups = self.host_tab_table.item(row, 2).text()
+            self.run_tab_table_dic[host_ip] = {'hidden': False, 'state': Qt.Checked, 'host_name': host_name, 'groups': groups, 'output_message': ''}
 
         self.gen_run_tab_table()
         self.main_tab.setCurrentWidget(self.run_tab)
@@ -2028,8 +2041,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.stat_tab_table.setShowGrid(True)
         self.stat_tab_table.setSortingEnabled(True)
         self.stat_tab_table.setColumnCount(0)
-        self.stat_tab_table.setColumnCount(18)
         self.stat_tab_table_title_list = ['host_ip', 'host_name', 'groups', 'up_days', 'users', 'tasks', 'r1m', 'r5m', 'r15m', 'cpu_thread', 'cpu_id', 'cpu_wa', 'mem_total', 'mem_avail', 'swap_total', 'swap_used', 'tmp_total', 'tmp_avail']
+        self.stat_tab_table.setColumnCount(len(self.stat_tab_table_title_list))
         self.stat_tab_table.setHorizontalHeaderLabels(self.stat_tab_table_title_list)
 
         self.stat_tab_table.setColumnWidth(0, 120)
@@ -2067,12 +2080,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_name" item.
             j += 1
-            host_name = stat_tab_table_dic[host_ip]['host_name']
-
-            if isinstance(host_name, list):
-                item = QTableWidgetItem('  '.join(host_name))
-            else:
-                item = QTableWidgetItem(host_name)
+            item = QTableWidgetItem(stat_tab_table_dic[host_ip]['host_name'])
 
             if not stat_tab_table_dic[host_ip]['host_name']:
                 item.setBackground(QBrush(Qt.red))
@@ -2081,12 +2089,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "group" item.
             j += 1
-            groups = stat_tab_table_dic[host_ip]['groups']
-
-            if isinstance(groups, list):
-                item = QTableWidgetItem('  '.join(groups))
-            else:
-                item = QTableWidgetItem(groups)
+            item = QTableWidgetItem(stat_tab_table_dic[host_ip]['groups'])
 
             if not stat_tab_table_dic[host_ip]['groups']:
                 item.setBackground(QBrush(Qt.red))
@@ -2287,16 +2290,24 @@ Please be free to contact liyanqing1987@163.com if any question."""
         if os.path.exists(host_stat_file):
             common.bprint('Loading host stat file "' + str(host_stat_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(host_stat_file, 'r') as HIF:
-                host_stat_dic = json.loads(HIF.read())
+            with open(host_stat_file, 'r') as HSF:
+                host_stat_dic = json.loads(HSF.read())
 
-            # Update host_ip "groups" item.
-            for host_ip in host_stat_dic.keys():
-                if host_ip in self.host_group_relationship_dic:
-                    host_stat_dic[host_ip]['groups'] = self.host_group_relationship_dic[host_ip]
-                else:
-                    host_stat_dic[host_ip]['host_name'] = []
-                    host_stat_dic[host_ip]['groups'] = []
+        for host_ip in host_stat_dic.keys():
+            # Add "host_ip" under host_stat_dic[host_ip].
+            host_stat_dic[host_ip]['host_ip'] = host_ip
+
+            # Add "host_name" under host_stat_dic[host_ip].
+            if host_ip in self.host_list_class.host_ip_dic.keys():
+                host_stat_dic[host_ip]['host_name'] = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
+            else:
+                host_stat_dic[host_ip]['host_name'] = ''
+
+            # Add "groups" under host_stat_dic[host_ip].
+            if host_ip in self.host_group_relationship_dic:
+                host_stat_dic[host_ip]['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
+            else:
+                host_stat_dic[host_ip]['groups'] = []
 
         return host_stat_dic
 
@@ -2330,12 +2341,13 @@ Please be free to contact liyanqing1987@163.com if any question."""
         """
         Get selected host_ip list, and jump to RUN tab, generate self.run_tab_table.
         """
-        self.run_tab_host_dic = {}
+        self.run_tab_table_dic = {}
 
         for row in range(self.stat_tab_table.rowCount()):
             host_ip = self.stat_tab_table.item(row, 0).text()
             host_name = self.stat_tab_table.item(row, 1).text()
-            self.run_tab_host_dic[host_ip] = {'host_name': host_name, 'state': Qt.Checked, 'output_message': ''}
+            groups = self.stat_tab_table.item(row, 2).text()
+            self.run_tab_table_dic[host_ip] = {'hidden': False, 'state': Qt.Checked, 'host_name': host_name, 'groups': groups, 'output_message': ''}
 
         self.gen_run_tab_table()
         self.main_tab.setCurrentWidget(self.run_tab)
@@ -2437,12 +2449,20 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.run_tab_timeout_line.setText(str(config.parallel_timeout))
 
         # "Command" item.
-        run_tab_command_label = QLabel('Command :', self.run_tab_frame0)
+        run_tab_command_label = QLabel('Command', self.run_tab_frame0)
         run_tab_command_label.setStyleSheet("font-weight: bold;")
         run_tab_command_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.run_tab_command_line = QLineEdit()
         self.run_tab_command_line.returnPressed.connect(self.run_tab_run_command)
+
+        # "Select" item.
+        run_tab_select_label = QLabel('Select', self.run_tab_frame0)
+        run_tab_select_label.setStyleSheet("font-weight: bold;")
+        run_tab_select_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        self.run_tab_select_line = QLineEdit()
+        self.run_tab_select_line.returnPressed.connect(self.gen_run_tab_table)
 
         # empty item.
         run_tab_empty_label = QLabel('', self.run_tab_frame0)
@@ -2451,6 +2471,11 @@ Please be free to contact liyanqing1987@163.com if any question."""
         run_tab_run_button = QPushButton('Run', self.run_tab_frame0)
         run_tab_run_button.setStyleSheet('''QPushButton:hover{background:rgb(0, 85, 255);}''')
         run_tab_run_button.clicked.connect(self.run_tab_run_command)
+
+        # "Check" button.
+        run_tab_check_button = QPushButton('Check', self.run_tab_frame0)
+        run_tab_check_button.setStyleSheet('''QPushButton:hover{background:rgb(0, 85, 255);}''')
+        run_tab_check_button.clicked.connect(self.gen_run_tab_table)
 
         # self.run_tab_frame0 - Grid
         run_tab_frame0_grid = QGridLayout()
@@ -2462,6 +2487,10 @@ Please be free to contact liyanqing1987@163.com if any question."""
         run_tab_frame0_grid.addWidget(self.run_tab_command_line, 0, 4)
         run_tab_frame0_grid.addWidget(run_tab_empty_label, 0, 5)
         run_tab_frame0_grid.addWidget(run_tab_run_button, 0, 6)
+        run_tab_frame0_grid.addWidget(run_tab_select_label, 1, 0)
+        run_tab_frame0_grid.addWidget(self.run_tab_select_line, 1, 1, 1, 4)
+        run_tab_frame0_grid.addWidget(run_tab_empty_label, 1, 5)
+        run_tab_frame0_grid.addWidget(run_tab_check_button, 1, 6)
 
         run_tab_frame0_grid.setColumnStretch(0, 2)
         run_tab_frame0_grid.setColumnStretch(1, 2)
@@ -2473,48 +2502,110 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         self.run_tab_frame0.setLayout(run_tab_frame0_grid)
 
-    def gen_run_tab_table(self):
+    def gen_run_tab_table(self, specified_host_ip_list=[]):
         """
-        Generate self.run_tab_tale with self.run_tab_host_dic.
+        Generate self.run_tab_table with self.run_tab_table_dic.
         """
+        self.collect_run_tab_table_info()
+
         # self.run_tab_table
         self.run_tab_table.setShowGrid(True)
         self.run_tab_table.setSortingEnabled(False)
         self.run_tab_table.setColumnCount(0)
-        self.run_tab_table.setColumnCount(3)
-        self.run_tab_table_title_list = ['host_ip', 'host_name', 'command_output_message']
+        self.run_tab_table_title_list = ['host_ip', 'host_name', 'groups', 'output_message']
+        self.run_tab_table.setColumnCount(len(self.run_tab_table_title_list))
         self.run_tab_table.setHorizontalHeaderLabels(self.run_tab_table_title_list)
 
-        self.run_tab_table.setColumnWidth(0, 160)
+        self.run_tab_table.setColumnWidth(0, 140)
         self.run_tab_table.setColumnWidth(1, 130)
-        self.run_tab_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.run_tab_table.setColumnWidth(2, 130)
+        self.run_tab_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
 
         # Fill self.run_tab_table items.
         self.run_tab_table.setRowCount(0)
-        self.run_tab_table.setRowCount(len(self.run_tab_host_dic.keys()))
+        run_tab_table_row_count = 0
 
+        for host_ip in self.run_tab_table_dic.keys():
+            if not self.run_tab_table_dic[host_ip]['hidden']:
+                run_tab_table_row_count += 1
+
+        self.run_tab_table.setRowCount(run_tab_table_row_count)
+
+        run_command = self.run_tab_command_line.text().strip()
         i = -1
 
-        for host_ip in self.run_tab_host_dic.keys():
-            host_name = self.run_tab_host_dic[host_ip]['host_name']
-            output_message = self.run_tab_host_dic[host_ip]['output_message']
-            i += 1
+        for host_ip in self.run_tab_table_dic.keys():
+            if not self.run_tab_table_dic[host_ip]['hidden']:
+                i += 1
 
-            # Fill "host_ip" item.
-            j = 0
-            item = QTableWidgetItem(host_ip)
-            item.setCheckState(self.run_tab_host_dic[host_ip]['state'])
-            self.run_tab_table.setItem(i, j, item)
+                # Fill "host_ip" item.
+                j = 0
+                item = QTableWidgetItem(host_ip)
+                state = self.run_tab_table_dic[host_ip]['state']
+                item.setCheckState(state)
+                self.run_tab_table.setItem(i, j, item)
 
-            # Fill "host_name" item.
-            j += 1
-            item = QTableWidgetItem(host_name)
-            self.run_tab_table.setItem(i, j, item)
+                # Fill "host_name" item.
+                j += 1
+                host_name = self.run_tab_table_dic[host_ip]['host_name']
+                item = QTableWidgetItem(host_name)
+                self.run_tab_table.setItem(i, j, item)
 
-            # Fill "command_output_message" item.
-            j += 1
-            item = QTableWidgetItem(output_message)
-            self.run_tab_table.setItem(i, j, item)
+                # Fill "groups" item.
+                j += 1
+                groups = self.run_tab_table_dic[host_ip]['groups']
+                item = QTableWidgetItem(groups)
+                self.run_tab_table.setItem(i, j, item)
+
+                # Fill "output_message" item.
+                j += 1
+                output_message = self.run_tab_table_dic[host_ip]['output_message']
+                item = QTableWidgetItem(output_message)
+
+                if 'pexpect.exceptions.TIMEOUT' in output_message:
+                    item.setForeground(QBrush(QColor(255, 102, 0)))
+                    self.update_run_tab_frame1('*Warning*: Host "' + str(host_ip) + '" ssh timeout.', color='orange')
+                elif "'default'" in output_message:
+                    item.setForeground(QBrush(QColor(255, 102, 0)))
+                    self.update_run_tab_frame1('*Warning*: Host "' + str(host_ip) + '" ssh fail.', color='orange')
+                elif (run_command == 'hostname') and (output_message != host_name) and output_message:
+                    if (' ' in host_name) and re.search(r'\b' + str(output_message) + r'\b', host_name):
+                        item.setForeground(QBrush(Qt.white))
+                    else:
+                        item.setForeground(QBrush(Qt.red))
+                        self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '", hostname is "' + str(host_name) + '" in host.list, but "' + str(output_message) + '" with hostname command.', color='red')
+                else:
+                    item.setForeground(QBrush(Qt.white))
+
+                self.run_tab_table.setItem(i, j, item)
+
+    def collect_run_tab_table_info(self):
+        """
+        Collect host ip info with specified select condition.
+        """
+        select_string = self.run_tab_select_line.text().strip()
+
+        if not select_string:
+            for host_ip in self.run_tab_table_dic.keys():
+                self.run_tab_table_dic[host_ip]['hidden'] = False
+                self.run_tab_table_dic[host_ip]['state'] = Qt.Checked
+        else:
+            for host_ip in self.run_tab_table_dic.keys():
+                try:
+                    if eval(select_string, {}, self.run_tab_table_dic[host_ip]):
+                        self.run_tab_table_dic[host_ip]['hidden'] = False
+                        self.run_tab_table_dic[host_ip]['state'] = Qt.Checked
+                    else:
+                        self.run_tab_table_dic[host_ip]['hidden'] = True
+                        self.run_tab_table_dic[host_ip]['state'] = Qt.Unchecked
+                except Exception:
+                    for host_ip in self.run_tab_table_dic.keys():
+                        self.run_tab_table_dic[host_ip]['hidden'] = False
+                        self.run_tab_table_dic[host_ip]['state'] = Qt.Checked
+
+                    warning_message = 'Invalid select string "' + str(select_string) + '"'
+                    self.gui_warning(warning_message)
+                    break
 
     def click_run_tab_table_header(self, index):
         """
@@ -2533,7 +2624,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             for row in range(self.run_tab_table.rowCount()):
                 self.run_tab_table.item(row, 0).setCheckState(new_state)
                 host_ip = self.run_tab_table.item(row, 0).text().strip()
-                self.run_tab_host_dic[host_ip]['state'] = new_state
+                self.run_tab_table_dic[host_ip]['state'] = new_state
 
     def run_tab_table_item_clicked(self, item):
         """
@@ -2542,8 +2633,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         if item.column() == 0:
             host_ip = item.text().strip()
 
-            if self.run_tab_host_dic[host_ip]['state'] != item.checkState():
-                self.run_tab_host_dic[host_ip]['state'] = item.checkState()
+            if self.run_tab_table_dic[host_ip]['state'] != item.checkState():
+                self.run_tab_table_dic[host_ip]['state'] = item.checkState()
 
                 if item.checkState() == Qt.Checked:
                     self.update_run_tab_frame1('* host_ip "' + str(host_ip) + '" is selected.')
@@ -2601,8 +2692,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
             run_tab_selected_host_ip_list = []
 
             with open(host_list_file, 'a') as HLF:
-                for host_ip in self.run_tab_host_dic.keys():
-                    if self.run_tab_host_dic[host_ip]['state'] == Qt.Checked:
+                for host_ip in self.run_tab_table_dic.keys():
+                    if self.run_tab_table_dic[host_ip]['state'] == Qt.Checked:
                         HLF.write(str(host_ip) + '\n')
                         run_tab_selected_host_ip_list.append(host_ip)
 
@@ -2623,41 +2714,20 @@ Please be free to contact liyanqing1987@163.com if any question."""
             self.update_run_tab_frame1('  Done')
             my_show_message.terminate()
 
-            # Clean up 'output_message' on self.run_tab_host_dic.
-            for host_ip in self.run_tab_host_dic.keys():
-                self.run_tab_host_dic[host_ip]['output_message'] = ''
+            # Clean up 'output_message' on self.run_tab_table_dic.
+            for host_ip in self.run_tab_table_dic.keys():
+                self.run_tab_table_dic[host_ip]['output_message'] = ''
 
             # Collect command output message.
             for file_name in os.listdir(tmp_batchRun_user_current_dir):
-                if file_name in self.run_tab_host_dic:
+                if file_name in self.run_tab_table_dic:
                     file_path = str(tmp_batchRun_user_current_dir) + '/' + str(file_name)
 
                     with open(file_path, 'r') as FP:
-                        self.run_tab_host_dic[file_name]['output_message'] = FP.read().strip()
+                        self.run_tab_table_dic[file_name]['output_message'] = FP.read().strip()
 
             # Update self.run_tab_table.
-            for row in range(self.run_tab_table.rowCount()):
-                host_ip = self.run_tab_table.item(row, 0).text().strip()
-                host_name = self.run_tab_table.item(row, 1).text().strip()
-                output_message = self.run_tab_host_dic[host_ip]['output_message']
-
-                if self.run_tab_host_dic[host_ip]['state'] == Qt.Checked:
-                    self.run_tab_table.item(row, 2).setText(output_message)
-
-                    if 'pexpect.exceptions.TIMEOUT' in output_message:
-                        self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
-                        self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '" ssh timeout.', color='red')
-                    elif "'default'" in output_message:
-                        self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
-                        self.update_run_tab_frame1('*Error*: Host "' + str(host_ip) + '" ssh fail.', color='red')
-                    elif (run_command == 'hostname') and (output_message != host_name) and output_message:
-                        if (' ' in host_name) and re.search(r'\b' + str(output_message) + r'\b', host_name):
-                            self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
-                        else:
-                            self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.red))
-                            self.update_run_tab_frame1('*Warning*: Host "' + str(host_ip) + '", hostname is "' + str(host_name) + '" in host.list, but "' + str(output_message) + '" with hostname command.', color='yellow')
-                    else:
-                        self.run_tab_table.item(row, 2).setForeground(QBrush(Qt.white))
+            self.gen_run_tab_table()
 
     def gen_run_tab_frame1(self):
         if not self.run_tab_frame1.layout():
@@ -2885,8 +2955,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.log_tab_table.setShowGrid(True)
         self.log_tab_table.setSortingEnabled(True)
         self.log_tab_table.setColumnCount(0)
-        self.log_tab_table.setColumnCount(5)
         self.log_tab_table_title_list = ['time', 'user', 'login_user', 'command', 'log']
+        self.log_tab_table.setColumnCount(len(self.log_tab_table_title_list))
         self.log_tab_table.setHorizontalHeaderLabels(self.log_tab_table_title_list)
 
         self.log_tab_table.setColumnWidth(0, 155)

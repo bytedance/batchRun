@@ -851,14 +851,9 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
     # Update expected_group_list.
     for host in specified_host_dic:
         if 'groups' in specified_host_dic[host]:
-            for host_groups in specified_host_dic[host]['groups']:
-                if isinstance(host_groups, list):
-                    for host_group in host_groups:
-                        if host_group not in expected_group_list:
-                            expected_group_list.append(host_group)
-                else:
-                    if host_groups not in expected_group_list:
-                        expected_group_list.append(host_groups)
+            for host_group in specified_host_dic[host]['groups']:
+                if host_group not in expected_group_list:
+                    expected_group_list.append(host_group)
 
     return specified_host_dic, excluded_host_list, expected_group_list, excluded_group_list
 
@@ -1073,14 +1068,9 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
     # Update expected_group_list.
     for host in specified_host_dic:
         if 'groups' in specified_host_dic[host]:
-            for host_groups in specified_host_dic[host]['groups']:
-                if isinstance(host_groups, list):
-                    for host_group in host_groups:
-                        if host_group not in expected_group_list:
-                            expected_group_list.append(host_group)
-                else:
-                    if host_groups not in expected_group_list:
-                        expected_group_list.append(host_groups)
+            for host_group in specified_host_dic[host]['groups']:
+                if host_group not in expected_group_list:
+                    expected_group_list.append(host_group)
 
     return specified_host_dic, excluded_host_list, expected_group_list, excluded_group_list
 
