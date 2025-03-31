@@ -89,7 +89,9 @@ class MainWindow(QMainWindow):
         self.network_scan_dic = {}
         network_scan_file = str(config.db_path) + '/network_scan/network_scan.json'
 
-        if os.path.exists(network_scan_file):
+        if not os.path.exists(network_scan_file):
+            common.bprint('Network scan file "' + str(network_scan_file) + '" is missing.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+        else:
             common.bprint('Loading network scan file "' + str(network_scan_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
             with open(network_scan_file, 'r') as NSF:
@@ -99,7 +101,9 @@ class MainWindow(QMainWindow):
         self.host_asset_dic = {}
         host_asset_file = str(config.db_path) + '/host_asset/host_asset.json'
 
-        if os.path.exists(host_asset_file):
+        if not os.path.exists(host_asset_file):
+            common.bprint('Host asset file "' + str(host_asset_file) + '" is missing.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+        else:
             common.bprint('Loading host asset file "' + str(host_asset_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
             with open(host_asset_file, 'r') as HAF:
@@ -109,7 +113,9 @@ class MainWindow(QMainWindow):
         self.host_queue_dic = {}
         host_queue_file = str(config.db_path) + '/host_queue/host_queue.json'
 
-        if os.path.exists(host_queue_file):
+        if not os.path.exists(host_queue_file):
+            common.bprint('Host queue file "' + str(host_queue_file) + '" is missing.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+        else:
             common.bprint('Loading host queue file "' + str(host_queue_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
             with open(host_queue_file, 'r') as HQF:
@@ -134,7 +140,9 @@ class MainWindow(QMainWindow):
         self.host_info_dic = {}
         host_info_file = str(config.db_path) + '/host_info/host_info.json'
 
-        if os.path.exists(host_info_file):
+        if not os.path.exists(host_info_file):
+            common.bprint('Host info file "' + str(host_info_file) + '" is missing.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+        else:
             common.bprint('Loading host info file "' + str(host_info_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
             with open(host_info_file, 'r') as HIF:
@@ -2307,7 +2315,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             if host_ip in self.host_group_relationship_dic:
                 host_stat_dic[host_ip]['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
             else:
-                host_stat_dic[host_ip]['groups'] = []
+                host_stat_dic[host_ip]['groups'] = ''
 
         return host_stat_dic
 
@@ -3019,12 +3027,15 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 lines.reverse()
 
                 for line in lines:
-                    line_dic = json.loads(line)
+                    try:
+                        line_dic = json.loads(line)
 
-                    if specified_begin_date <= line_dic['date'] <= specified_end_date:
-                        if (not specified_info) or re.search(specified_info, line_dic['command']):
-                            time = datetime.datetime.strptime(str(line_dic['date']) + str(line_dic['time']), '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
-                            self.log_dic_list.insert(0, {'time': time, 'user': line_dic['user'], 'login_user': line_dic['login_user'], 'command': line_dic['command'], 'log': line_dic['log']})
+                        if specified_begin_date <= line_dic['date'] <= specified_end_date:
+                            if (not specified_info) or re.search(specified_info, line_dic['command']):
+                                time = datetime.datetime.strptime(str(line_dic['date']) + str(line_dic['time']), '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
+                                self.log_dic_list.insert(0, {'time': time, 'user': line_dic['user'], 'login_user': line_dic['login_user'], 'command': line_dic['command'], 'log': line_dic['log']})
+                    except Exception:
+                        pass
 
         return self.log_dic_list
 
