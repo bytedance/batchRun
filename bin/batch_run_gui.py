@@ -29,7 +29,7 @@ import common_pyqt5
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
 VERSION = 'V2.2'
-VERSION_DATE = '2025.02.25'
+VERSION_DATE = '2025.04.27'
 
 
 # Solve some unexpected warning message.
@@ -245,6 +245,10 @@ class MainWindow(QMainWindow):
         export_log_table_action.setIcon(QIcon(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_log_table_action.triggered.connect(self.export_log_table)
 
+        import_run_list_action = QAction('Import run list', self)
+        import_run_list_action.setIcon(QIcon(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/data/pictures/load.png'))
+        import_run_list_action.triggered.connect(self.import_run_list)
+
         exit_action = QAction('Exit', self)
         exit_action.setIcon(QIcon(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/data/pictures/exit.png'))
         exit_action.triggered.connect(qApp.quit)
@@ -261,6 +265,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(export_stat_table_action)
         file_menu.addAction(export_run_table_action)
         file_menu.addAction(export_log_table_action)
+        file_menu.addAction(import_run_list_action)
         file_menu.addAction(exit_action)
 
         # Function
@@ -2510,7 +2515,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         self.run_tab_frame0.setLayout(run_tab_frame0_grid)
 
-    def gen_run_tab_table(self, specified_host_ip_list=[]):
+    def gen_run_tab_table(self):
         """
         Generate self.run_tab_table with self.run_tab_table_dic.
         """
@@ -3108,6 +3113,69 @@ Please be free to contact liyanqing1987@163.com if any question."""
             common.bprint('Writing ' + str(table_type) + ' table into "' + str(output_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
             common.write_csv(csv_file=output_file, content_dic=content_dic)
 # Export table (end) #
+
+    def import_run_list(self):
+        """
+        Import host_ip list with specified file on RUN tab.
+        """
+        (run_list_file, file_type) = QFileDialog.getOpenFileName(self, 'Import run list', '.', "All Files (*)")
+
+        # Get host_ip_list from run_list_file.
+        host_ip_list = []
+
+        if os.path.splitext(run_list_file)[1].lower() == '.csv':
+            try:
+                csv_dic = common.read_csv(run_list_file)
+            except Exception as error:
+                warning_message = 'Failed on opening ' + str(run_list_file) + ' for read, ' + str(error)
+                self.gui_warning(warning_message)
+                return
+
+            if 'host_ip' not in csv_dic:
+                warning_message = 'Not "host_ip" key on ' + str(run_list_file) + '.'
+                self.gui_warning(warning_message)
+                return
+            else:
+                for host_ip in csv_dic['host_ip'].values():
+                    host_ip_list.append(host_ip)
+        else:
+            try:
+                with open(run_list_file, 'r') as RLF:
+                    for line in RLF.readlines():
+                        line = line.strip()
+                        host_ip_list.append(line)
+            except Exception as error:
+                warning_message = 'Failed on opening ' + str(run_list_file) + ' for read, ' + str(error)
+                self.gui_warning(warning_message)
+                return
+
+        # Update self.run_tab_table_dic with host_ip_list.
+        self.run_tab_table_dic = {}
+
+        for host_ip in host_ip_list:
+            if not common.is_ip(host_ip):
+                warning_message = 'Invalid host ip "' + str(host_ip) + '" on ' + str(run_list_file) + '.'
+                self.gui_warning(warning_message)
+                return
+
+            # Add "host_name" under self.run_tab_table_dic[host_ip].
+            if host_ip in self.host_list_class.host_ip_dic.keys():
+                host_name = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
+            else:
+                host_name = ''
+
+            # Add "groups" under self.run_tab_table_dic[host_ip].
+            if host_ip in self.host_group_relationship_dic:
+                groups = '  '.join(self.host_group_relationship_dic[host_ip])
+            else:
+                groups = ''
+
+            self.run_tab_table_dic[host_ip] = {'hidden': False, 'state': Qt.Checked, 'host_name': host_name, 'groups': groups, 'output_message': ''}
+
+        # Trun to RUN tab and rebuild self.run_tab_table.
+        if host_ip_list:
+            self.main_tab.setCurrentWidget(self.run_tab)
+            self.gen_run_tab_table()
 
     def closeEvent(self, QCloseEvent):
         """
