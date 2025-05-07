@@ -1086,3 +1086,11 @@ def write_csv(csv_file, content_dic):
     """
     df = pandas.DataFrame(content_dic)
     df.to_csv(csv_file, index=False)
+
+
+def read_csv(csv_file):
+    """
+    Read csv and return a dict.
+    """
+    df = pandas.read_csv(csv_file)
+    return df.to_dict()
