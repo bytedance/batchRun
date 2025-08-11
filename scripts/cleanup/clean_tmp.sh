@@ -1,3 +1,3 @@
 #!/bin/bash
 
-/bin/tmpwatch -amv 7d /tmp
+/bin/tmpwatch -amv 14d /tmp
