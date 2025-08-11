@@ -585,7 +585,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         zone_list.insert(0, 'ALL')
 
         for zone in zone_list:
-            self.scan_tab_zone_combo.addCheckBoxItem(zone)
+            self.scan_tab_zone_combo.addCheckBoxItem(zone, update_width=True)
 
         # Set to checked status for checked_zone_list.
         for (i, qBox) in enumerate(self.scan_tab_zone_combo.checkBoxList):
@@ -611,7 +611,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         network_list.insert(0, 'ALL')
 
         for network in network_list:
-            self.scan_tab_network_combo.addCheckBoxItem(network)
+            self.scan_tab_network_combo.addCheckBoxItem(network, update_width=True)
 
         # Set to checked status for checked_network_list.
         for (i, qBox) in enumerate(self.scan_tab_network_combo.checkBoxList):
@@ -1447,7 +1447,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         item_list.insert(0, 'ALL')
 
         for item in item_list:
-            combo_instance.addCheckBoxItem(item)
+            combo_instance.addCheckBoxItem(item, update_width=True)
 
         # Set to checked status for checked_queue_list.
         for (i, qBox) in enumerate(combo_instance.checkBoxList):
@@ -1465,7 +1465,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         scheduler_list.insert(0, 'ALL')
 
         for scheduler in scheduler_list:
-            self.host_tab_scheduler_combo.addCheckBoxItem(scheduler)
+            self.host_tab_scheduler_combo.addCheckBoxItem(scheduler, update_width=True)
 
         # Set to checked status for checked_scheduler_list.
         for (i, qBox) in enumerate(self.host_tab_scheduler_combo.checkBoxList):
@@ -1491,7 +1491,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         cluster_list.insert(0, 'ALL')
 
         for cluster in cluster_list:
-            self.host_tab_cluster_combo.addCheckBoxItem(cluster)
+            self.host_tab_cluster_combo.addCheckBoxItem(cluster, update_width=True)
 
         # Set to checked status for checked_cluster_list.
         for (i, qBox) in enumerate(self.host_tab_cluster_combo.checkBoxList):
@@ -1523,7 +1523,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         queue_list.insert(0, 'ALL')
 
         for queue in queue_list:
-            self.host_tab_queues_combo.addCheckBoxItem(queue)
+            self.host_tab_queues_combo.addCheckBoxItem(queue, update_width=True)
 
         # Set to checked status for checked_queue_list.
         for (i, qBox) in enumerate(self.host_tab_queues_combo.checkBoxList):
@@ -2928,7 +2928,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             user_list.insert(0, 'ALL')
 
         for user in user_list:
-            self.log_tab_user_combo.addCheckBoxItem(user)
+            self.log_tab_user_combo.addCheckBoxItem(user, update_width=True)
 
         # Set to checked status for checked_queue_list.
         for (i, qBox) in enumerate(self.log_tab_user_combo.checkBoxList):
