@@ -330,12 +330,15 @@ class BatchRun():
             command_history_file = str(log_user_dir) + '/command.his'
             log_file = str(log_user_dir) + '/' + str(START_TIME)
 
-            with open(command_history_file, 'a') as CHF:
-                start_date = START_TIME.split('_')[0]
-                start_time = START_TIME.split('_')[1]
-                cmd_string = ' '.join(sys.argv).strip()
-                command_dic = {'date': start_date, 'time': start_time, 'user': CURRENT_USER, 'login_user': LOGIN_USER, 'command': cmd_string, 'log': log_file}
-                CHF.write(str(json.dumps(command_dic, ensure_ascii=False)) + '\n')
+            try:
+                with open(command_history_file, 'a') as CHF:
+                    start_date = START_TIME.split('_')[0]
+                    start_time = START_TIME.split('_')[1]
+                    cmd_string = ' '.join(sys.argv).strip()
+                    command_dic = {'date': start_date, 'time': start_time, 'user': CURRENT_USER, 'login_user': LOGIN_USER, 'command': cmd_string, 'log': log_file}
+                    CHF.write(str(json.dumps(command_dic, ensure_ascii=False)) + '\n')
+            except Exception as warning:
+                common.bprint(f'Failed on opening "{command_history_file}" for read, {warning}', level='Warning')
 
     def save_log(self, message, end='\n'):
         """
@@ -345,8 +348,11 @@ class BatchRun():
             # Write log file.
             log_file = str(config.db_path) + '/log/' + str(CURRENT_USER) + '/' + str(START_TIME)
 
-            with open(log_file, 'a') as LF:
-                LF.write(str(message) + str(end))
+            try:
+                with open(log_file, 'a') as LF:
+                    LF.write(str(message) + str(end))
+            except Exception as warning:
+                common.bprint(f'Failed on opening "{log_file}" for read, {warning}', level='Warning')
 
     def save_out(self, message, end='\n', host=''):
         """
@@ -379,12 +385,15 @@ class BatchRun():
         password_file = str(config.db_path) + '/password/' + str(self.user)
 
         if os.path.exists(password_file):
-            with open(password_file, 'r') as PF:
-                for line in PF.readlines():
-                    host_name = line.split()[1]
+            try:
+                with open(password_file, 'r') as PF:
+                    for line in PF.readlines():
+                        host_name = line.split()[1]
 
-                    if host_name != 'default':
-                        password_host_list.append(host_name)
+                        if host_name != 'default':
+                            password_host_list.append(host_name)
+            except Exception as warning:
+                common.bprint(f'Failed on opening "{password_file}" for read, {warning}', level='Warning')
 
         return password_host_list
 
