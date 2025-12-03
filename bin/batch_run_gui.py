@@ -11,11 +11,14 @@ import sys
 import copy
 import json
 import time
+import atexit
+import socket
 import getpass
 import datetime
 import qdarkstyle
+import subprocess
 
-from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QAction, qApp, QTabWidget, QFrame, QGridLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox, QLineEdit, QHeaderView, QFileDialog, QTextEdit, QTreeWidget, QTreeWidgetItem, QDateEdit, QSplitter, QComboBox, QMenu, QSizePolicy
+from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QAction, qApp, QTabWidget, QFrame, QGridLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox, QLineEdit, QHeaderView, QFileDialog, QTextEdit, QTreeWidget, QTreeWidgetItem, QDateEdit, QSplitter, QComboBox, QMenu, QSizePolicy, QAbstractItemView
 from PyQt5.QtGui import QIcon, QBrush, QFont, QColor
 from PyQt5.QtCore import Qt, QThread, QProcess, QDate
 
@@ -28,8 +31,8 @@ import common_pyqt5
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
-VERSION = 'V2.2'
-VERSION_DATE = '2025.04.27'
+VERSION = 'V2.3'
+VERSION_DATE = '2025.12.03'
 
 
 # Solve some unexpected warning message.
@@ -1910,7 +1913,9 @@ Please be free to contact liyanqing1987@163.com if any question."""
             self.stat_tab_frame0.setFrameShape(QFrame.Box)
 
             self.stat_tab_table = QTableWidget(self.stat_tab)
+            self.stat_tab_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
             self.stat_tab_table.itemClicked.connect(self.stat_tab_check_click)
+            self.stat_tab_table.itemDoubleClicked.connect(self.on_table_double_click)
 
             # self.stat_tab - Grid
             stat_tab_grid = QGridLayout()
@@ -1926,6 +1931,9 @@ Please be free to contact liyanqing1987@163.com if any question."""
         # Generate sub-frames
         self.gen_stat_tab_frame0()
         self.gen_stat_tab_table()
+
+        # statistic web
+        self.web_server = WebServer()
 
     def gen_stat_tab_frame0(self):
         # self.stat_tab_frame0
@@ -2387,6 +2395,17 @@ Please be free to contact liyanqing1987@163.com if any question."""
                         self.my_show_top_file.start()
                     else:
                         common.bprint('Not find top file "' + str(top_file) + '".', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+
+    def on_table_double_click(self, item=None):
+        if item is None:
+            return
+
+        row = item.row()
+        ip_item = self.stat_tab_table.item(row, 0).text().strip()
+
+        if ip_item:
+            data_path = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/web'
+            self.web_server.open_url_in_firefox(data_path, ip_item)
 # For stat TAB (end) #
 
 # For run TAB (begin) #
@@ -3247,6 +3266,54 @@ class ShowMessage(QThread):
     def run(self):
         command = 'python3 ' + str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/message.py --title "' + str(self.title) + '" --message "' + str(self.message) + '"'
         os.system(command)
+
+
+class WebServer:
+    def __init__(self):
+        self.server_process = None
+        self.server_port = None
+        atexit.register(self.cleanup)
+
+    @staticmethod
+    def find_free_port():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+
+        return port
+
+    def start_server(self, target_path):
+        if self.server_process and self.server_process.poll() is None:
+            return self.server_port
+
+        port = self.find_free_port()
+
+        # Start HTTP server
+        self.server_process = subprocess.Popen(['python3', '-m', 'http.server', str(port)], cwd=target_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.server_port = port
+
+        # Wait for Http Server
+        time.sleep(1)
+
+        return port
+
+    def open_url_in_firefox(self, target_path, ip_value):
+        try:
+            port = self.start_server(target_path)
+            url = f"http://0.0.0.0:{port}?ip={ip_value}"
+            subprocess.Popen(['/bin/firefox', url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as error:
+            common.bprint(f'Failed to check host statistic data. Error {str(error)}', date_format='%Y-%m-%d %H:%M:%S', level='Error')
+
+    def cleanup(self):
+        # Terminate server process
+        if self.server_process:
+            self.server_process.terminate()
+            self.server_process.wait()
+
+    def is_running(self):
+        return self.server_process and self.server_process.poll() is None
 
 
 ################

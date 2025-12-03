@@ -1,0 +1,31 @@
+{
+    "10.249.73.246": {
+        "host_name": [
+            "n249-073-246"
+        ],
+        "groups": [
+            "IC_ETX"
+        ],
+        "up_days": 5,
+        "users": 1,
+        "tasks": 1127,
+        "r1m": 3.58,
+        "r5m": 3.74,
+        "r15m": 5.2,
+        "cpu_thread": 120,
+        "cpu_id": 98.9,
+        "cpu_wa": 0.5,
+        "mem_total": 992,
+        "mem_used": 2,
+        "mem_free": 984,
+        "mem_shared": 0,
+        "mem_buff": 5,
+        "mem_avail": 982,
+        "swap_total": 127,
+        "swap_used": 0,
+        "swap_free": 127,
+        "tmp_total": 1932,
+        "tmp_used": 14,
+        "tmp_avail": 1919
+    }
+}

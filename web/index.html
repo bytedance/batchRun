@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machine Status Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="js/chart.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>BatchRun Web</h2>
+            </div>
+
+
+
+            <div class="control-group">
+                <label for="ip-input">Select Host</label>
+                <input list="ip-list" id="ip-input" placeholder="Type to search...">
+                <datalist id="ip-list">
+                    <!-- Options will be injected here -->
+                </datalist>
+            </div>
+
+            <div class="control-group" id="host-info-panel" style="display: none;">
+                <div class="info-item">
+                    <span class="label">Hostname:</span>
+                    <span class="value" id="host-name-display">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Groups:</span>
+                    <span class="value" id="host-groups-display">-</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Time Range</label>
+                <div class="date-inputs">
+                    <input type="datetime-local" id="start-date">
+                    <input type="datetime-local" id="end-date">
+                </div>
+                <button id="refresh-btn">Apply Range</button>
+            </div>
+
+            <div class="status-panel">
+                <div class="status-item">
+                    <span class="label">Status</span>
+                    <span class="value" id="status-text">Ready</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Data Points</span>
+                    <span class="value" id="data-points">0</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div id="loading-overlay" class="hidden">
+                <div class="spinner"></div>
+                <div class="loading-text">Loading...</div>
+            </div>
+            <header class="top-bar">
+                <h1 id="dashboard-title">Dashboard</h1>
+                <div class="last-updated">Last Updated: <span id="last-updated-time">-</span></div>
+            </header>
+
+            <div class="charts-grid" id="charts-container">
+                <!-- Charts will be injected here -->
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>
