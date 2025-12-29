@@ -1,4 +1,4 @@
-**Version:** V2.2
+**Version:** V2.3
 
 
 ## What's batchRun?
@@ -67,3 +67,4 @@ More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_m
 |         |           | Fix the id authentication bug on crontab.  |
 | V2.2    | (2025.02) | Merge GROUP&HOST tabs on GUI.              |
 |         |           | Add ASSET tab on GUI.                      |
+| V2.3    | (2025.12) | Add stat curve function on STAT tab.       |
