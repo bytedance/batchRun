@@ -362,10 +362,10 @@ class ParseHostList():
     Parse host_list file, get group/host_ip/host_name related information.
     """
     def __init__(self, host_list_file=''):
-        self.host_list_file = config.host_list
-
         if host_list_file and os.path.exists(host_list_file):
             self.host_list_file = host_list_file
+        elif config.host_list and os.path.exists(config.host_list):
+            self.host_list_file = config.host_list
 
         self.host_list_dic = {}
         self.expanded_host_list_dic = {}
@@ -493,7 +493,7 @@ class ParseHostList():
         # Update host_name.
         if host_name:
             if 'host_name' not in self.host_list_dic[group]['hosts'][host_ip]:
-                self.host_list_dic[group]['hosts'][host_ip]['host_name'] = [host_name,]
+                self.host_list_dic[group]['hosts'][host_ip]['host_name'] = [host_name, ]
             else:
                 if host_name not in self.host_list_dic[group]['hosts'][host_ip]['host_name']:
                     self.host_list_dic[group]['hosts'][host_ip]['host_name'].append(host_name)
@@ -518,14 +518,14 @@ class ParseHostList():
         """
         # Update groups.
         if host_ip not in self.host_ip_dic:
-            self.host_ip_dic[host_ip] = {'groups': [group,]}
+            self.host_ip_dic[host_ip] = {'groups': [group, ]}
         else:
             self.host_ip_dic[host_ip]['groups'].append(group)
 
         # Update host_name.
         if host_name:
             if 'host_name' not in self.host_ip_dic[host_ip]:
-                self.host_ip_dic[host_ip]['host_name'] = [host_name,]
+                self.host_ip_dic[host_ip]['host_name'] = [host_name, ]
             else:
                 if host_name not in self.host_ip_dic[host_ip]['host_name']:
                     self.host_ip_dic[host_ip]['host_name'].append(host_name)
