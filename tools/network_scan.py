@@ -64,6 +64,10 @@ def read_args():
         common.bprint('Not find output directory "' + str(output_dir) + '".', level='Error')
         sys.exit(1)
 
+    if not os.access(output_dir, os.W_OK):
+        common.bprint('No write permission on output directory "' + str(output_dir) + '".', level='Error')
+        sys.exit(1)
+
     return args.alive, args.parallel, args.debug, args.input_file, args.output_file
 
 
@@ -92,7 +96,10 @@ class NetworkScan():
 
         with open(self.input_file, 'r') as IF:
             for line in IF.readlines():
-                if re.match(r'^\s*$', line) or re.match(r'^\s*#.*#', line):
+                # Strip inline comments (everything after #)
+                line = re.sub(r'#.*$', '', line).strip()
+
+                if re.match(r'^\s*$', line):
                     continue
                 elif re.match(r'^\s*(\S+)\s+(\S+)\s*$', line):
                     my_match = re.match(r'^\s*(\S+)\s+(\S+)\s*$', line)

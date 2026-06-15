@@ -24,7 +24,7 @@ def get_command_dict(command):
         if line:
             i += 1
 
-            # Some speciall preprocess.
+            # Some special preprocess.
             if re.search(r'lsload', command):
                 line = re.sub(r'\*', ' ', line)
 
@@ -37,7 +37,7 @@ def get_command_dict(command):
                 command_info = line.split()
 
                 if (len(command_info) < len(key_list)) and ('unavail' not in command_info):
-                    common.bprint('For command "' + str(command) + '", below info line is incomplate/unexpected.', level='Warning')
+                    common.bprint(f'For command "{command}", below info line is incomplete/unexpected.', level='Warning')
                     common.bprint(line, color='yellow', display_method=1, indent=11)
 
                 for j in range(len(key_list)):
@@ -270,7 +270,7 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
     Job <101>, Job Name <Tesf for lsfMonitor>, User <liyanqing>, Project <lsf_test>, Status <RUN>, Queue <normal>, Command <sleep 12345>, Share group charged </liyanqing>
     Mon Oct 26 17:43:07: Submitted from host <cmp01>, CWD <$HOME>, 2 Task(s), Requested Resources <span[hosts=1] rusage[mem=123]>;
     Mon Oct 26 17:43:07: Started 2 Task(s) on Host(s) <2*cmp01>, Allocated 2 Slot(s) on Host(s) <2*cmp01>, Execution Home </home/liyanqing>, Execution CWD </home/liyanqing>;
-    Mon Oct 26 17:46:17: Resource usage collected. MEM: 2 Mbytes; SWAP: 238 Mbytes; NTHREAD: 4; PGID: 10643; PIDs: 10643 10644 10646;
+    Mon Oct 26 17:46:17: Resource usage collected. The CPU time used is 13065 seconds. IDLE_FACTOR(cputime/runtime):   0.00; MEM: 2 Mbytes; SWAP: 238 Mbytes; NTHREAD: 4; PGID: 10643; PIDs: 10643 10644 10646;
 
 
      MEMORY USAGE:
@@ -298,12 +298,14 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                        'submitted_from_compile': re.compile(r'(.*): Submitted from host <([^>]+)>.*'),
                        'cwd_compile': re.compile(r'.*CWD <([^>]+)>.*'),
                        'processors_requested_compile': re.compile(r'.* (\d+) Task\(s\).*'),
-                       'requested_resources_compile': re.compile(r'.*Requested Resources <(.+)>;.*'),
+                       'requested_resources_compile': re.compile(r'.*Requested Resources <([^>]+)>'),
                        'span_hosts_compile': re.compile(r'.*Requested Resources <.*span\[hosts=([1-9][0-9]*).*>.*'),
                        'rusage_mem_compile': re.compile(r'.*Requested Resources <.*rusage\s*\[.*mem=([1-9][0-9]*).*>.*'),
+                       'specified_hosts_compile': re.compile(r'.*Specified Hosts <([^>]+)>.*'),
                        'started_on_compile': re.compile(r'(.*): (\[\d+\] )?([sS]tarted|[dD]ispatched) \d+ Task\(s\) on Host\(s\) (.+?), Allocated (\d+) Slot\(s\) on Host\(s\).*'),
                        'resource_usage_collected_compile': re.compile(r'.*Resource usage collected.*'),
                        'cpu_time_compile': re.compile(r'.*The CPU time used is (\d+(\.\d+)?) seconds.*'),
+                       'idle_factor_compile': re.compile(r'.*IDLE_FACTOR\(cputime/runtime\):\s*(\d+(\.\d+)?);.*'),
                        'mem_compile': re.compile(r'.*[\.\;]\s+MEM:\s*(\d+(\.\d+)?)\s*([KMGT]bytes).*'),
                        'swap_compile': re.compile(r'.*SWAP:\s*(\d+(\.\d+)?)\s*([KMGT]bytes).*'),
                        'pids_compile': re.compile(r'PIDs:\s+(.+?);'),
@@ -312,7 +314,8 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                        'term_signal_compile': re.compile(r'.*(TERM_.+?): (.+?\.).*'),
                        'run_limit_compile': re.compile(r'\s*RUNLIMIT\s*'),
                        'max_mem_compile': re.compile(r'\s*MAX MEM: (\d+(\.\d+)?) ([KMGT]bytes);\s*AVG MEM: (\d+(\.\d+)?) ([KMGT]bytes)\s*'),
-                       'pending_reasons_compile': re.compile(r'\s*PENDING REASONS:\s*')}
+                       'pending_reasons_compile': re.compile(r'\s*PENDING REASONS:\s*'),
+                       'effective_rusage_mem_compile': re.compile(r'.*Effective:.*rusage\s*\[.*mem=([1-9][0-9]*).*')}
 
     my_dic = {}
     job = ''
@@ -350,12 +353,14 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                                'requested_resources': '',
                                'span_hosts': '',
                                'rusage_mem': '',
+                               'specified_hosts': '',
                                'started_on': '',
                                'started_time': '',
                                'finished_time': '',
                                'exit_code': '',
                                'term_signal': '',
                                'cpu_time': '',
+                               'idle_factor': '',
                                'mem': '',
                                'swap': '',
                                'run_limit': [],
@@ -428,6 +433,10 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
                     elif lsf_unit_for_limits == 'TB':
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
+
+                if job_compile_dic['specified_hosts_compile'].match(line):
+                    my_match = job_compile_dic['specified_hosts_compile'].match(line)
+                    my_dic[job]['specified_hosts'] = my_match.group(1)
             elif job_compile_dic['started_on_compile'].match(line):
                 my_match = job_compile_dic['started_on_compile'].match(line)
                 my_dic[job]['started_time'] = my_match.group(1)
@@ -440,6 +449,10 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                 if job_compile_dic['cpu_time_compile'].match(line):
                     my_match = job_compile_dic['cpu_time_compile'].match(line)
                     my_dic[job]['cpu_time'] = my_match.group(1)
+
+                if job_compile_dic['idle_factor_compile'].match(line):
+                    my_match = job_compile_dic['idle_factor_compile'].match(line)
+                    my_dic[job]['idle_factor'] = my_match.group(1)
 
                 if job_compile_dic['mem_compile'].match(line) and (not my_dic[job]['mem']):
                     my_match = job_compile_dic['mem_compile'].match(line)
@@ -512,6 +525,19 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
                     my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024, 1)
                 elif unit == 'Tbytes':
                     my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024*1024, 1)
+            elif (not my_dic[job]['rusage_mem']) and job_compile_dic['effective_rusage_mem_compile'].match(line):
+                my_match = job_compile_dic['effective_rusage_mem_compile'].match(line)
+                my_dic[job]['rusage_mem'] = my_match.group(1)
+
+                # Switch rusage_mem unit into "MB".
+                if lsf_unit_for_limits == 'KB':
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])/1024, 1)
+                elif lsf_unit_for_limits == 'MB':
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']), 1)
+                elif lsf_unit_for_limits == 'GB':
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
+                elif lsf_unit_for_limits == 'TB':
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
             else:
                 if run_limit_mark:
                     my_dic[job]['run_limit'].append(line.strip())
@@ -570,11 +596,14 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
                        'submitted_from_compile': re.compile(r'(.*): Submitted from host <([^>]+)>.*'),
                        'cwd_compile': re.compile(r'.*CWD <([^>]+)>.*'),
                        'processors_requested_compile': re.compile(r'.* ([1-9][0-9]*) Processors Requested.*'),
-                       'requested_resources_compile': re.compile(r'.*Requested Resources <(.+)>;.*'),
+                       'requested_resources_compile': re.compile(r'.*Requested Resources <([^>]+)>'),
                        'span_hosts_compile': re.compile(r'.*Requested Resources <.*span\[hosts=([1-9][0-9]*).*>.*'),
                        'rusage_mem_compile': re.compile(r'.*Requested Resources <.*rusage\s*\[.*mem=([1-9][0-9]*).*>.*'),
+                       'specified_hosts_compile': re.compile(r'.*Specified Hosts <([^>]+)>.*'),
                        'started_on_compile': re.compile(r'(.*): ([sS]tarted|[dD]ispatched) on ([0-9]+ Hosts/Processors )?([^;,]+).*'),
                        'resource_usage_collected_compile': re.compile(r'.*Resource usage collected.*'),
+                       'cpu_time_compile': re.compile(r'.*The CPU time used is (\d+(\.\d+)?) seconds.*'),
+                       'idle_factor_compile': re.compile(r'.*IDLE_FACTOR\(cputime/runtime\):\s*(\d+(\.\d+)?);.*'),
                        'mem_compile': re.compile(r'.*[\.\;]\s+MEM:\s*(\d+(\.\d+)?)\s*([KMGT]bytes).*'),
                        'swap_compile': re.compile(r'.*SWAP:\s*(\d+(\.\d+)?)\s*([KMGT]bytes).*'),
                        'pids_compile': re.compile(r'PIDs:\s+(.+?);'),
@@ -619,12 +648,14 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
                                'requested_resources': '',
                                'span_hosts': '',
                                'rusage_mem': '',
+                               'specified_hosts': '',
                                'started_on': '',
                                'started_time': '',
                                'finished_time': '',
                                'exit_code': '',
                                'term_signal': '',
                                'cpu_time': '',
+                               'idle_factor': '',
                                'mem': '',
                                'swap': '',
                                'run_limit': [],
@@ -697,6 +728,10 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
                     elif lsf_unit_for_limits == 'TB':
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
+
+                if job_compile_dic['specified_hosts_compile'].match(line):
+                    my_match = job_compile_dic['specified_hosts_compile'].match(line)
+                    my_dic[job]['specified_hosts'] = my_match.group(1)
             elif job_compile_dic['started_on_compile'].match(line):
                 my_match = job_compile_dic['started_on_compile'].match(line)
                 my_dic[job]['started_time'] = my_match.group(1)
@@ -706,6 +741,14 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
                 started_host = re.sub(r'\d+\*', '', started_host)
                 my_dic[job]['started_on'] = started_host
             elif job_compile_dic['resource_usage_collected_compile'].match(line):
+                if job_compile_dic['cpu_time_compile'].match(line):
+                    my_match = job_compile_dic['cpu_time_compile'].match(line)
+                    my_dic[job]['cpu_time'] = my_match.group(1)
+
+                if job_compile_dic['idle_factor_compile'].match(line):
+                    my_match = job_compile_dic['idle_factor_compile'].match(line)
+                    my_dic[job]['idle_factor'] = my_match.group(1)
+
                 if job_compile_dic['mem_compile'].match(line) and (not my_dic[job]['mem']):
                     my_match = job_compile_dic['mem_compile'].match(line)
                     my_dic[job]['mem'] = my_match.group(1)
@@ -878,7 +921,7 @@ def get_queue_host_info(command='bqueues -l', get_hosts_list_command='bhosts -w'
             hosts_string = my_match.group(1)
 
             if hosts_all_compile.search(hosts_string):
-                common.bprint('Queue "' + str(queue) + '" is not well configured, all of the hosts are on the same queue.', level='Warning')
+                common.bprint(f'Queue "{queue}" is not well configured, all of the hosts are on the same queue.', level='Warning')
                 queue_host_dic[queue] = get_host_list(get_hosts_list_command)
             else:
                 queue_host_dic.setdefault(queue, [])
@@ -892,12 +935,19 @@ def get_queue_host_info(command='bqueues -l', get_hosts_list_command='bhosts -w'
                         if host_group_name in bmgroup_dic.keys():
                             host_list = bmgroup_dic[host_group_name]
 
-                        if len(host_list) > 0:
+                        if host_list:
                             queue_host_dic[queue].extend(host_list)
                     elif re.match(r'^(\S+)\+\d+$', hosts):
                         my_match = re.match(r'^(\S+)\+\d+$', hosts)
                         host = my_match.group(1)
-                        queue_host_dic[queue].append(host)
+
+                        if host in bmgroup_dic.keys():
+                            host_list = bmgroup_dic[host]
+
+                            if host_list:
+                                queue_host_dic[queue].extend(host_list)
+                        else:
+                            queue_host_dic[queue].append(host)
                     else:
                         queue_host_dic[queue].append(hosts)
 

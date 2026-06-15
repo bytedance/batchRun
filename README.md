@@ -1,4 +1,4 @@
-**Version:** V2.3
+**Version:** V2.4
 
 
 ## What's batchRun?
@@ -7,7 +7,7 @@ You can run batchRun with command line or GUI mode.
 
 
 ## Python dependency
-Need python3.12.7
+Need python3.12.12
 Install python library dependency with command
 
     pip install -r requirements.txt
@@ -68,3 +68,5 @@ More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_m
 | V2.2    | (2025.02) | Merge GROUP&HOST tabs on GUI.              |
 |         |           | Add ASSET tab on GUI.                      |
 | V2.3    | (2025.12) | Add stat curve function on STAT tab.       |
+| V2.4    | (2026.06) | Add AI menu: assistant, cluster analysis,  |
+|         |           | security analysis.                         |

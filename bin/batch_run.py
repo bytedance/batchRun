@@ -26,8 +26,8 @@ import common
 import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
-VERSION = 'V2.3'
-VERSION_DATE = '2025.12.03'
+VERSION = 'V2.4'
+VERSION_DATE = '2026.06.14'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
@@ -176,7 +176,7 @@ def read_args():
         format_command = re.sub(r'\\', '', format_command)
 
         for illegal_command in config.illegal_command_list:
-            if (format_command in config.illegal_command_list) or re.match(r'^' + str(illegal_command) + '$', format_command):
+            if (format_command == illegal_command) or re.match(r'^' + str(illegal_command) + '$', format_command):
                 common.bprint('Illegal command!', level='Error')
                 sys.exit(1)
 
@@ -241,7 +241,7 @@ def list_hosts(host_list_class, specified_host_dic, expected_group_list, exclude
                         if 'host_name' in group_dic['hosts'][host_ip]:
                             host_name_list = group_dic['hosts'][host_ip]['host_name']
                         else:
-                            host_name_list = ['',]
+                            host_name_list = ['', ]
 
                         if 'ssh_port' in group_dic['hosts'][host_ip]:
                             ssh_port = group_dic['hosts'][host_ip]['ssh_port']
@@ -301,6 +301,9 @@ class BatchRun():
 
         self.password_host_list = self.get_password_hosts()
 
+        # Lock to serialize log/screen writes in parallel mode.
+        self.io_lock = threading.Lock()
+
     def preprocess_command_string(self, command_list):
         """
         Remove unreasonable escape for "-".
@@ -349,8 +352,9 @@ class BatchRun():
             log_file = str(config.db_path) + '/log/' + str(CURRENT_USER) + '/' + str(START_TIME)
 
             try:
-                with open(log_file, 'a') as LF:
-                    LF.write(str(message) + str(end))
+                with self.io_lock:
+                    with open(log_file, 'a') as LF:
+                        LF.write(str(message) + str(end))
             except Exception as warning:
                 common.bprint(f'Failed on opening "{log_file}" for read, {warning}', level='Warning')
 
@@ -372,10 +376,12 @@ class BatchRun():
                 common.create_dir(output_dir, permission=0o777)
 
             # Write output file.
-            with open(output_file, 'a') as OF:
-                OF.write(str(message) + str(end))
+            with self.io_lock:
+                with open(output_file, 'a') as OF:
+                    OF.write(str(message) + str(end))
         else:
-            print(message, end=end)
+            with self.io_lock:
+                print(message, end=end)
 
     def get_password_hosts(self):
         """
@@ -626,43 +632,51 @@ class BatchRun():
     def parallel_run(self):
         """
         Run commands in parallel mode.
+        "self.parallel == 0" means no concurrency limit, run all tasks in parallel.
+        "self.parallel == n" means run at most n tasks in parallel.
         """
         host_num = 0
         thread_list = []
 
-        # Collect all commands into thread_list.
+        # "self.parallel == 0" means unlimited concurrency.
+        semaphore = threading.Semaphore(self.parallel) if self.parallel else None
+
+        def worker(host, host_ip, ssh_port):
+            try:
+                self.execute_ssh_command(host, host_ip, ssh_port)
+            finally:
+                if semaphore:
+                    semaphore.release()
+
+        # Collect all (host, host_ip, ssh_port) targets.
+        target_list = []
+
         for host in self.specified_host_dic.keys():
             if 'host_ip' in self.specified_host_dic[host]:
                 for (i, host_ip) in enumerate(self.specified_host_dic[host]['host_ip']):
                     ssh_port = self.specified_host_dic[host]['ssh_port'][i]
-                    thread = threading.Thread(target=self.execute_ssh_command, args=(host, host_ip, ssh_port))
-                    thread.start()
-                    thread_list.append(thread)
+                    target_list.append((host, host_ip, ssh_port))
             else:
-                host_ip = None
                 ssh_port = None
 
                 if 'ssh_port' in self.specified_host_dic[host]:
                     ssh_port = self.specified_host_dic[host]['ssh_port']
 
-                thread = threading.Thread(target=self.execute_ssh_command, args=(host, host_ip, ssh_port))
-                thread.start()
-                thread_list.append(thread)
+                target_list.append((host, None, ssh_port))
 
-        # Run commands in thread_list according to specified parallelism.
-        alive_thread_list = []
+        # Start threads, acquiring the semaphore before each start to enforce parallelism.
+        for (host, host_ip, ssh_port) in target_list:
+            if semaphore:
+                semaphore.acquire()
 
-        for thread in thread_list:
             host_num += 1
+            thread = threading.Thread(target=worker, args=(host, host_ip, ssh_port))
+            thread.start()
+            thread_list.append(thread)
+
+        # Wait for all threads to finish.
+        for thread in thread_list:
             thread.join()
-            alive_thread_list.append(thread)
-
-            while self.parallel and (len(alive_thread_list) >= self.parallel):
-                time.sleep(1)
-
-                for alive_thread in alive_thread_list:
-                    if not alive_thread.is_alive():
-                        alive_thread_list.remove(alive_thread)
 
         return host_num
 

@@ -305,7 +305,7 @@ def is_ip(input_string):
     """
     Judge the input string is ip or not.
     """
-    if re.match(r'(([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])\.){3}([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])', input_string):
+    if re.match(r'^(([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])\.){3}([01]{0,1}\d{0,1}\d|2[0-4]\d|25[0-5])$', input_string):
         return True
     else:
         return False
@@ -696,8 +696,8 @@ class ParseHostList():
             # Exclude group "exclude_groups" from group_hosts_dic
             if 'exclude_groups' in self.host_list_dic[group]:
                 for exclude_group in self.host_list_dic[group]['exclude_groups']:
-                    if sub_group == parent_group:
-                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(parent_group) + '.', level='Error')
+                    if exclude_group == parent_group:
+                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(exclude_group) + '.', level='Error')
                         sys.exit(1)
 
                     exclude_group_hosts_dic = self.get_group_hosts_dic(exclude_group, parent_group=group)
@@ -744,7 +744,7 @@ def check_repetitiveness(host, specified_host_dic):
     return False
 
 
-def parse_specified_groups(specified_group_list, host_list_class=None, specified_host_dic={}, excluded_host_list=[], expected_group_list=[], excluded_group_list=[]):
+def parse_specified_groups(specified_group_list, host_list_class=None, specified_host_dic=None, excluded_host_list=None, expected_group_list=None, excluded_group_list=None):
     """
     Specified group could be:
     group
@@ -757,6 +757,18 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
     * expected_group_list : specified group(s). (Will remove excluded host)
     * excluded_group_list : excluded group(s).
     """
+    if specified_host_dic is None:
+        specified_host_dic = {}
+
+    if excluded_host_list is None:
+        excluded_host_list = []
+
+    if expected_group_list is None:
+        expected_group_list = []
+
+    if excluded_group_list is None:
+        excluded_group_list = []
+
     if not host_list_class:
         host_list_class = ParseHostList()
 
@@ -858,7 +870,7 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
     return specified_host_dic, excluded_host_list, expected_group_list, excluded_group_list
 
 
-def parse_specified_hosts(specified_host_list, host_list_class=None, specified_host_dic={}, excluded_host_list=[], expected_group_list=[], excluded_group_list=[]):
+def parse_specified_hosts(specified_host_list, host_list_class=None, specified_host_dic=None, excluded_host_list=None, expected_group_list=None, excluded_group_list=None):
     """
     Specified host could be:
     host_ip
@@ -878,6 +890,18 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
     * excluded_host_list  : excluded host(s).
     * excluded_host_list  : excluded host(s).
     """
+    if specified_host_dic is None:
+        specified_host_dic = {}
+
+    if excluded_host_list is None:
+        excluded_host_list = []
+
+    if expected_group_list is None:
+        expected_group_list = []
+
+    if excluded_group_list is None:
+        excluded_group_list = []
+
     if not host_list_class:
         host_list_class = ParseHostList()
 

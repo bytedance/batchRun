@@ -69,6 +69,15 @@ export BATCH_RUN_INSTALL_PATH=""" + str(CWD) + """
 # Set LD_LIBRARY_PATH.
 """ + str(ld_library_path_setting) + """
 
+# Set input method for Qt5 (auto-detect ibus/fcitx).
+if [ -z "$QT_IM_MODULE" ]; then
+    if pgrep -x ibus-daemon > /dev/null 2>&1; then
+        export QT_IM_MODULE=ibus
+    elif pgrep -x fcitx > /dev/null 2>&1 || pgrep -x fcitx5 > /dev/null 2>&1; then
+        export QT_IM_MODULE=fcitx
+    fi
+fi
+
 # Preprocess "command" argument.
 pre_arg=""
 num=-1
@@ -100,7 +109,7 @@ def gen_shell_tools():
     """
     Generate shell scripts under <BATCH_RUN_INSTALL_PATH>.
     """
-    tool_list = ['bin/batch_run_gui', 'tools/encrypt_python', 'tools/network_scan', 'tools/patch', 'tools/sample_host_info', 'tools/sample_host_queue', 'tools/sample_host_stat', 'tools/save_password', 'tools/show_top_file', 'tools/switch_etc_hosts']
+    tool_list = ['bin/batch_run_gui', 'tools/cleanup_log', 'tools/encrypt_python', 'tools/network_scan', 'tools/patch', 'tools/sample_host_info', 'tools/sample_host_queue', 'tools/sample_host_stat', 'tools/save_password', 'tools/show_top_file', 'tools/switch_etc_hosts']
     ld_library_path_setting = get_ld_library_path_setting()
 
     for tool_name in tool_list:
@@ -154,7 +163,7 @@ host_list = '""" + str(host_list) + """'
 db_path = '""" + str(CWD) + """/db'
 
 # Default ssh command.
-default_ssh_command = 'ssh -o StrictHostKeyChecking=no -t -q'
+default_ssh_command = 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -t -q'
 
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
@@ -177,6 +186,43 @@ sample_host_queue_command = '""" + str(CWD) + """/tools/sample_host_queue --grou
 
 # Command for sample_host_stat.
 sample_host_stat_command = '""" + str(CWD) + """/tools/sample_host_stat --groups ALL'
+
+# Log retention days (auto-cleanup log files older than this).
+log_retention_days = 30
+
+# AI helpdesk settings (OpenAI-compatible API).
+ai_api_base_url = ''
+ai_api_key = ''
+ai_model_name = ''
+
+# Commands requiring user confirmation before AI executes.
+ai_dangerous_commands = [
+    # Destructive file/disk operations
+    'rm', 'rmdir', 'shred', 'truncate',
+    'mkfs', 'fdisk', 'parted', 'wipefs', 'dd',
+    'lvremove', 'vgremove', 'pvremove',
+    # Process/service/power control
+    'kill', 'killall', 'pkill',
+    'shutdown', 'reboot', 'poweroff', 'halt', 'init',
+    'systemctl', 'service',
+    # User/permission management
+    'useradd', 'userdel', 'usermod',
+    'passwd', 'chpasswd',
+    'groupadd', 'groupdel', 'groupmod',
+    'chown', 'chmod', 'visudo',
+    # Network/firewall
+    'iptables', 'ip6tables', 'nftables',
+    'firewall-cmd', 'ufw',
+    'ifdown', 'nmcli',
+    # Package management
+    'yum', 'dnf', 'apt', 'rpm', 'pip',
+    # Scheduler state changes
+    'bkill', 'badmin', 'bstop', 'bresume', 'brestart', 'bswitch',
+    'scontrol', 'scancel',
+    # Other risky operations
+    'crontab', 'at',
+    'mount', 'umount', 'fsck',
+]
 """)
 
             os.chmod(config_file, 0o777)
