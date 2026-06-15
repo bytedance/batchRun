@@ -11,6 +11,7 @@ import getpass
 import argparse
 
 sys.path.append(os.environ['BATCH_RUN_INSTALL_PATH'])
+sys.path.append(os.path.join(os.environ['BATCH_RUN_INSTALL_PATH'], 'common'))
 from common import common_secure
 from config import config
 
