@@ -48,11 +48,15 @@ Your role covers:
 - System operations: host availability, load monitoring, CPU/memory/swap/tmp usage, uptime, service health, configuration consistency, patch management, scheduled maintenance
 - Security hardening: access control, SSH hardening, firewall rules, vulnerability scanning, intrusion detection, compliance auditing, security baseline enforcement
 
-batchRun is an HPC batch operations tool designed for these purposes — it manages host inventory, executes commands across hundreds of hosts in parallel, collects system metrics, and performs security audits.
+batchRun is an HPC batch operations tool — it manages host inventory in groups, executes commands across hundreds of hosts in parallel via SSH, collects system metrics, and performs security audits. The "cluster" refers to ALL hosts defined in batchRun's host.list configuration, organized by groups.
 
-Tools: run_command (execute Linux/cluster management commands on the management node, or use batch_run for parallel execution across multiple hosts).
+Key paths for this installation:
+- Host list: {host_list}
+- Database directory: {db_path}
 
-Response style:
+Tools: run_command (execute any Linux command on the management node — read data files, run batch_run for cross-host operations, grep/cat/python for analysis, etc.)
+
+Response rules:
 - Be concise and direct. Lead with the conclusion or diagnosis, then explain briefly.
 - Reply in user's language.
 - If a command fails or returns an error, immediately retry with an alternative command. Not all flags are supported across different Linux distributions — use simpler, universally compatible flags on retry.
@@ -60,6 +64,11 @@ Response style:
 - IMPORTANT: Only run commands when the user asks a specific question about their cluster, hosts, or resources. For greetings or general questions, respond conversationally — briefly introduce your capabilities without executing any commands.
 - IMPORTANT: During diagnostic/information-gathering phases, you MUST execute commands directly via run_command tool — never list them as text for the user to choose.
 - IMPORTANT: After executing commands, you MUST always provide a clear conclusion to the user — even if the result is negative (e.g. "not found", "no match", "all normal"). Never end your response with just command outputs and no summary. Summarize what you searched, what you found (or didn't find), and what it means.
+- IMPORTANT: When analyzing the cluster, prefer reading pre-collected data files (host_stat.json, host_info.json, etc.) over running batch_run commands to remote hosts. Only use live batch_run commands when the data files are stale or don't contain the needed information.
+- IMPORTANT: Minimize the number of tool calls. When you need to gather multiple pieces of information, combine them into a SINGLE command using shell features (semicolons, pipes, &&, subshells). For example, use `cat file1.json | python3 -c "import json,sys; d=json.load(sys.stdin); ..."` to read and analyze in one call, or `uptime; free -h; df -h` to gather multiple metrics at once. Aim for NO MORE than 5 tool calls per response. If you find yourself needing more, step back and design a more efficient approach (e.g. write a short inline script).
+- IMPORTANT: When gathering information from remote hosts, write a local shell script that collects ALL needed data in one pass, then execute it via batch_run. batch_run natively supports executing local scripts on remote hosts — if a command is not found remotely, it will automatically scp the script and run it. Example workflow: write a script `/tmp/check_cluster.sh` containing all checks (uptime, df, free, ps, etc.), then run `batch_run -G RUN -P 128 -t 60 -c '/tmp/check_cluster.sh'`. This is far more efficient than calling batch_run multiple times with different commands.
+- IMPORTANT: When using batch_run to execute commands on remote hosts, unless the user explicitly specifies a target group or host range, always default to `-G RUN`. If the RUN group does not exist (batch_run reports an error), fall back to `-G ALL`. Do NOT split execution across multiple groups in separate calls — use one group that covers all targets in a single batch_run invocation.
+- IMPORTANT: When running batch_run for tasks that may take longer than a few seconds per host (e.g. package queries, large file searches, service restarts), always extend the timeout with `-t <seconds>` (e.g. `-t 60` or `-t 120`). The default timeout is short (10s serial, 20s parallel) and will cause premature failures on slow operations.
 - IMPORTANT: When you have finished diagnosis and are presenting final actionable solutions that would CHANGE system state (kill processes, modify configs, restart services), you MUST end your response with a clearly formatted numbered list like this:
 
 ---
@@ -359,8 +368,11 @@ class AiChatThread(QThread):
             if self._sources.get("skills"):
                 common.bprint(f'[AI Debug] Injected skills: {self._sources["skills"]}', date_format='%Y-%m-%d %H:%M:%S')
 
+    # Skills that are always injected regardless of tag matching.
+    ALWAYS_INJECT_SKILLS = ['batchrun_usage']
+
     def _inject_skills(self):
-        """Check the latest user message against skill tags, inject matched skills into system prompt."""
+        """Inject skills into system prompt. Always-inject skills are included unconditionally; others are matched by tag."""
         if not self.skills:
             return
 
@@ -371,16 +383,29 @@ class AiChatThread(QThread):
                 user_msg = msg.get('content', '')
                 break
 
-        if not user_msg:
-            return
+        injected_content = []
+        injected_names = []
 
-        skill_content, skill_names = match_skills(self.skills, user_msg)
+        # Always inject core skills.
+        for skill in self.skills:
+            if skill['name'] in self.ALWAYS_INJECT_SKILLS:
+                injected_content.append(skill['content'])
+                injected_names.append(skill['name'])
 
-        if skill_names:
-            self._sources["skills"] = skill_names
+        # Tag-match remaining skills from user message.
+        if user_msg:
+            remaining_skills = [s for s in self.skills if s['name'] not in self.ALWAYS_INJECT_SKILLS]
+            matched_content, matched_names = match_skills(remaining_skills, user_msg)
 
-        if skill_content and self.messages and self.messages[0].get('role') == 'system':
-            self.messages[0]['content'] = self.messages[0]['content'] + '\n\n' + skill_content
+            if matched_content:
+                injected_content.append(matched_content)
+                injected_names.extend(matched_names)
+
+        if injected_names:
+            self._sources["skills"] = injected_names
+
+        if injected_content and self.messages and self.messages[0].get('role') == 'system':
+            self.messages[0]['content'] = self.messages[0]['content'] + '\n\n' + '\n\n'.join(injected_content)
 
     def stop(self):
         self._stop_flag = True
@@ -500,6 +525,8 @@ class AiChatThread(QThread):
 
         return AiChatThread._anthropic_client_cache[cache_key]
 
+    MAX_TOOL_CALLS = 10
+
     def _agent_loop_openai(self):
         import time as _time
 
@@ -510,6 +537,7 @@ class AiChatThread(QThread):
             return
 
         max_loops = 10
+        total_tool_calls = 0
 
         for loop_i in range(max_loops):
             if self._stop_flag:
@@ -529,10 +557,12 @@ class AiChatThread(QThread):
             self.status_signal.emit('Waiting for LLM response')
             _t_api = _time.time()
 
-            is_last_loop = (loop_i == max_loops - 1)
+            is_last_loop = (loop_i == max_loops - 1) or (total_tool_calls >= self.MAX_TOOL_CALLS)
 
             if is_last_loop:
-                self.messages.append({"role": "user", "content": "请基于以上所有已收集的信息，给出完整的分析结论和可操作的建议。不要再请求更多数据。"})
+                self.messages.append({"role": "user", "content": "You have reached the maximum number of tool calls. Stop calling tools NOW and provide your conclusion based on all information collected so far. Summarize findings and give actionable recommendations."})
+            elif total_tool_calls >= self.MAX_TOOL_CALLS - 2:
+                self.messages.append({"role": "user", "content": "You are approaching the tool call limit. Wrap up your investigation — combine any remaining checks into one final command if needed, then provide your conclusion in the next response."})
 
             _api_kwargs = dict(
                 model=self.model_name,
@@ -687,6 +717,7 @@ class AiChatThread(QThread):
                     _t_tool = _time.time()
                     result = self._execute_tool(tool_name, args)
                     self._timing_stats["tool_total"] += _time.time() - _t_tool
+                    total_tool_calls += 1
 
                     self.tool_call_result.emit(tool_name, result)
                     self.messages.append({"role": "user", "content": f"[Tool result from {tool_name}]:\n{result}"})
@@ -725,6 +756,7 @@ class AiChatThread(QThread):
                 _t_tool = _time.time()
                 result = self._execute_tool(tool_name, args)
                 self._timing_stats["tool_total"] += _time.time() - _t_tool
+                total_tool_calls += 1
 
                 self.tool_call_result.emit(tool_name, result)
 
@@ -748,6 +780,7 @@ class AiChatThread(QThread):
             return
 
         max_loops = 10
+        total_tool_calls = 0
 
         for loop_i in range(max_loops):
             if self._stop_flag:
@@ -766,10 +799,12 @@ class AiChatThread(QThread):
 
             self.status_signal.emit('Waiting for LLM response')
 
-            is_last_loop = (loop_i == max_loops - 1)
+            is_last_loop = (loop_i == max_loops - 1) or (total_tool_calls >= self.MAX_TOOL_CALLS)
 
             if is_last_loop:
-                self.messages.append({"role": "user", "content": "请基于以上所有已收集的信息，给出完整的分析结论和可操作的建议。不要再请求更多数据。"})
+                self.messages.append({"role": "user", "content": "You have reached the maximum number of tool calls. Stop calling tools NOW and provide your conclusion based on all information collected so far. Summarize findings and give actionable recommendations."})
+            elif total_tool_calls >= self.MAX_TOOL_CALLS - 2:
+                self.messages.append({"role": "user", "content": "You are approaching the tool call limit. Wrap up your investigation — combine any remaining checks into one final command if needed, then provide your conclusion in the next response."})
 
             system, anthropic_msgs = openai_messages_to_anthropic(self.messages)
 
@@ -895,6 +930,7 @@ class AiChatThread(QThread):
                     _t_tool = _time.time()
                     result = self._execute_tool(tool_name, args)
                     self._timing_stats["tool_total"] += _time.time() - _t_tool
+                    total_tool_calls += 1
 
                     self.tool_call_result.emit(tool_name, result)
                     self.messages.append({"role": "user", "content": f"[Tool result from {tool_name}]:\n{result}"})
@@ -933,6 +969,7 @@ class AiChatThread(QThread):
                 _t_tool = _time.time()
                 result = self._execute_tool(tool_name, args)
                 self._timing_stats["tool_total"] += _time.time() - _t_tool
+                total_tool_calls += 1
 
                 self.tool_call_result.emit(tool_name, result)
 

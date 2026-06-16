@@ -4169,7 +4169,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.ai_tab.setLayout(ai_tab_grid)
 
         # Init conversation history.
-        self.ai_messages = [{"role": "system", "content": common_ai.SYSTEM_PROMPT + f"\n\nCurrent user: {CURRENT_USER}"}]
+        system_prompt = common_ai.SYSTEM_PROMPT.format(db_path=config.db_path, host_list=config.host_list)
+        self.ai_messages = [{"role": "system", "content": system_prompt + f"\n\nCurrent user: {CURRENT_USER}"}]
 
         # Load skills.
         skills_dir = os.path.join(os.environ.get('BATCH_RUN_INSTALL_PATH', '.'), 'config', 'skills')
@@ -4639,7 +4640,8 @@ Please be free to contact liyanqing1987@163.com if any question."""
         """Clear chat history."""
         self.ai_tab_chat_text.clear()
         self._create_chat_avatars()
-        self.ai_messages = [{"role": "system", "content": common_ai.SYSTEM_PROMPT + f"\n\nCurrent user: {CURRENT_USER}"}]
+        system_prompt = common_ai.SYSTEM_PROMPT.format(db_path=config.db_path, host_list=config.host_list)
+        self.ai_messages = [{"role": "system", "content": system_prompt + f"\n\nCurrent user: {CURRENT_USER}"}]
         self.ai_feedback_widget.hide()
 
     def ai_handle_confirm_request(self, command):
@@ -5326,7 +5328,7 @@ document.addEventListener('click', function(e) {
             lines.append('<p class="missing">无负载采样数据，跳过此项检查。</p>')
         else:
             # 3a: High load.
-            lines.append(f'<h4 id="sec-3a">3a. 高负载（15分钟平均负载 &gt; CPU线程数）</h4>')
+            lines.append('<h4 id="sec-3a">3a. 高负载（15分钟平均负载 &gt; CPU线程数）</h4>')
 
             if high_load_hosts:
                 lines.append(f'<div class="conclusion-box"><b>结论：</b>{len(high_load_hosts)} 台主机负载超过CPU核心数，处于过载状态。</div>')
@@ -6109,9 +6111,6 @@ document.addEventListener('click', function(e) {
             return info.get('server_type', '')
 
         # === Pre-compute all findings for dashboard and sections ===
-        error_hosts = [ip for ip, f in findings.items() if f.get('scan_error')]
-
-        unreg_ips = passive_data.get('unregistered_ips', [])
         non_standard_ssh = passive_data.get('non_standard_ssh', [])
         os_dist = passive_data.get('os_distribution', {})
         eol_os = passive_data.get('eol_os', {})
@@ -6413,7 +6412,6 @@ document.addEventListener("DOMContentLoaded", function() {
         card_cls = 'danger' if total_issues > 10 else ('warning' if total_issues > 0 else 'ok')
         lines.append(f'<div class="dash-card {card_cls}"><div class="num">{total_issues}</div><div class="label">安全发现</div></div>')
         lines.append('</div>')
-
 
         # === SECTION: 1. SSH配置审计 ===
         lines.append('<h3 id="sec-sshd">1. SSH配置审计</h3>')
@@ -6933,7 +6931,7 @@ class SshTestThread(QThread):
                     with open(output_file, 'r') as f:
                         content = f.read().strip()
 
-                    output_lines = [l.strip() for l in content.split('\n') if not l.strip().startswith('>>>')]
+                    output_lines = [line.strip() for line in content.split('\n') if not line.strip().startswith('>>>')]
                     output_content = '\n'.join(output_lines).strip()
 
                     found_uptime = False
