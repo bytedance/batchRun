@@ -513,7 +513,16 @@ class NavigationToolbar2QT(NavigationToolbar2QT):
                     (year, month, day, hour, minute, second) = event_xdata.split(',')
                     event_xdata = datetime.datetime(int(year), int(month), int(day), int(hour), int(minute), int(second))
 
-                xdata_list = list(self.canvas.figure.gca().get_lines()[0].get_xdata())
+                lines = self.canvas.figure.gca().get_lines()
+
+                if not lines:
+                    return
+
+                xdata_list = list(lines[0].get_xdata())
+
+                if not xdata_list:
+                    return
+
                 (xdata, index) = self.bisection(event_xdata, sorted(xdata_list))
 
                 if xdata is not None:
@@ -535,4 +544,5 @@ class NavigationToolbar2QT(NavigationToolbar2QT):
                         info_string = '[%s]\n%s' % (xdata_string, info_string)
 
                     return info_string
+
         return ''

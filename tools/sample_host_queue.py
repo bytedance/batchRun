@@ -45,12 +45,12 @@ def read_args():
                         help='Specify the user password for SSH login to specified host.')
     parser.add_argument('-P', '--parallel',
                         type=int,
-                        default=0,
-                        help='Specify the parallelism for batch_run, default is "0".')
+                        default=getattr(config, 'max_parallel', 512),
+                        help='Specify the parallelism for batch_run, default is config.max_parallel.')
     parser.add_argument('-t', '--timeout',
                         type=int,
-                        default=20,
-                        help='Specify the timeout for batch_run, default is "20".')
+                        default=30,
+                        help='Specify the timeout for batch_run, default is "30".')
     parser.add_argument('-i', '--host_info_json',
                         default=str(config.db_path) + '/host_info/host_info.json',
                         help='Specify host info file to collect host static information, default is "' + str(config.db_path) + '/host_info/host_info.json".')
@@ -72,6 +72,12 @@ def read_args():
 
 class SampleHostQueue():
     def __init__(self, host_list, group_list, user, password, parallel, timeout, host_info_json, output_dir):
+        # Pass the password via the BATCH_RUN_PASSWORD env var (inherited by the
+        # batch_run subprocess) instead of a "--password" CLI argument, so it
+        # is not exposed in the child process argv / `ps`.
+        if password:
+            os.environ['BATCH_RUN_PASSWORD'] = password
+
         self.host_list = host_list
         self.group_list = group_list
         self.user = user
@@ -93,7 +99,7 @@ class SampleHostQueue():
 
         return host_info_dic
 
-    def cleanup_with_suffix(self, suffix_list=['lsid', 'queues', 'hosts', 'bmgroup']):
+    def cleanup_with_suffix(self, suffix_list=['lsid', 'queues', 'hosts', 'bmgroup', 'sample']):
         common.bprint('\n>>> Cleaning up files with suffixs "' + '|'.join(suffix_list) + '" ...')
 
         for root, dirs, files in os.walk(self.output_dir):
@@ -103,7 +109,7 @@ class SampleHostQueue():
                         file_path = os.path.join(root, file)
                         os.remove(file_path)
 
-    def get_batch_run_command(self, host_list=[], group_list=[], user='', password='', parallel=0, timeout=20):
+    def get_batch_run_command(self, host_list=[], group_list=[], user='', password='', parallel=0, timeout=30):
         """
         Get default batch_run command (without run command).
         """
@@ -117,9 +123,6 @@ class SampleHostQueue():
 
         if user:
             batch_run_command = str(batch_run_command) + ' --user ' + str(user)
-
-        if password:
-            batch_run_command = str(batch_run_command) + ' --password ' + str(password)
 
         batch_run_command = str(batch_run_command) + ' --parallel ' + str(parallel)
 
@@ -137,7 +140,7 @@ class SampleHostQueue():
         batch_run_command = self.get_batch_run_command(host_list, group_list, self.user, self.password, self.parallel, self.timeout)
         command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.lsid'
         common.bprint(command, indent=4)
-        os.system(command)
+        common.run_command(command)
 
     def collect_host_lsid_info(self):
         """
@@ -168,37 +171,136 @@ class SampleHostQueue():
 
     def sample_cluster_host_info(self, cluster_host_dic):
         """
-        Sample queue-host relationship with command "bqueues/bhosts/bmgroup".
+        Sample bqueues/bhosts/bmgroup for each cluster.
+
+        All three commands run in ONE ssh session per host (was three), wrapped
+        with sentinel markers so the combined output can be split back into the
+        three files the downstream parser expects.
+
+        Fault tolerance: each host in the cluster is tried in turn until one
+        yields a complete sample (all three markers present, bhosts non-empty).
+        A single unreachable host no longer drops the whole cluster's data --
+        we just move on to the next host. If no host in the cluster can be
+        sampled, an error is logged instead of silently producing an empty
+        result.
         """
         common.bprint('\n>>> Sampling cluster host information ...')
 
+        # Sentinel markers wrap each command's output. Unlikely strings that
+        # will not appear in bqueues/bhosts/bmgroup output.
+        bqueues_marker = '__BQUEUES_BEGIN__'
+        bhosts_marker = '__BHOSTS_BEGIN__'
+        bmgroup_marker = '__BMGROUP_BEGIN__'
+        sample_command = (
+            'source /etc/profile; '
+            "echo '" + bqueues_marker + "'; bqueues -l; "
+            "echo '" + bhosts_marker + "'; bhosts -w; "
+            "echo '" + bmgroup_marker + "'; bmgroup -w -r"
+        )
+
+        # bhosts -w on a large cluster can be slow; give it more room than the
+        # default per-host timeout. The main protection is host failover.
+        cluster_timeout = max(self.timeout, 60)
+
         for scheduler in cluster_host_dic.keys():
             for cluster in cluster_host_dic[scheduler].keys():
-                first_host = cluster_host_dic[scheduler][cluster][0]
+                host_list = cluster_host_dic[scheduler][cluster]
+                cluster_prefix = str(scheduler) + '_' + str(cluster)
+                combined_file = str(self.output_dir) + '/' + str(cluster_prefix) + '.sample'
 
-                common.bprint('* Sampling queues information for scheduler "' + str(scheduler) + '" cluster "' + str(cluster) + '" on host "' + str(first_host) + '" ...', indent=4)
-                sample_command = 'source /etc/profile; bqueues -l'
-                batch_run_command = self.get_batch_run_command([first_host], [], self.user, self.password, 1, self.timeout)
-                cluster_queues_file = str(self.output_dir) + '/' + str(scheduler) + '_' + str(cluster) + '.bqueues'
-                command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(cluster_queues_file)
-                common.bprint(command, indent=4)
-                os.system(command)
+                sampled = False
 
-                common.bprint('* Sampling hosts information for scheduler "' + str(scheduler) + '" cluster "' + str(cluster) + '" on host "' + str(first_host) + '" ...', indent=4)
-                sample_command = 'source /etc/profile; bhosts -w'
-                batch_run_command = self.get_batch_run_command([first_host], [], self.user, self.password, 1, self.timeout)
-                cluster_hosts_file = str(self.output_dir) + '/' + str(scheduler) + '_' + str(cluster) + '.bhosts'
-                command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(cluster_hosts_file)
-                common.bprint(command, indent=4)
-                os.system(command)
+                for host in host_list:
+                    # batch_run appends to output_file; remove any stale content
+                    # from a previous attempt so this host's sample is clean.
+                    if os.path.lexists(combined_file):
+                        try:
+                            os.remove(combined_file)
+                        except Exception:
+                            pass
 
-                common.bprint('* Sampling host group information for scheduler "' + str(scheduler) + '" cluster "' + str(cluster) + '" on host "' + str(first_host) + '" ...', indent=4)
-                sample_command = 'source /etc/profile; bmgroup -w -r'
-                batch_run_command = self.get_batch_run_command([first_host], [], self.user, self.password, 1, self.timeout)
-                cluster_bmgroup_file = str(self.output_dir) + '/' + str(scheduler) + '_' + str(cluster) + '.bmgroup'
-                command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(cluster_bmgroup_file)
-                common.bprint(command, indent=4)
-                os.system(command)
+                    common.bprint('* Sampling bqueues/bhosts/bmgroup for scheduler "' + str(scheduler) + '" cluster "' + str(cluster) + '" on host "' + str(host) + '" ...', indent=4)
+                    batch_run_command = self.get_batch_run_command([host], [], self.user, self.password, 1, cluster_timeout)
+                    command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(combined_file)
+                    common.bprint(command, indent=4)
+                    common.run_command(command)
+
+                    if self._split_cluster_sample(combined_file, cluster_prefix, bqueues_marker, bhosts_marker, bmgroup_marker):
+                        sampled = True
+                        break
+
+                    common.bprint('  Incomplete sample on host "' + str(host) + '", trying next host ...', indent=4, level='Warning')
+
+                if not sampled:
+                    common.bprint('*Error*: Failed to sample bqueues/bhosts/bmgroup for scheduler "' + str(scheduler) + '" cluster "' + str(cluster) + '" on any of ' + str(len(host_list)) + ' host(s).', indent=4, level='Error')
+
+    def _split_cluster_sample(self, combined_file, cluster_prefix, bqueues_marker, bhosts_marker, bmgroup_marker):
+        """
+        Split a combined .sample file (one ssh, three commands separated by
+        sentinel markers) back into <prefix>.bqueues / .bhosts / .bmgroup files
+        that collect_host_queue_info reads.
+
+        Returns True only when all three markers were found AND the bhosts
+        section is non-empty (bhosts is the load-bearing input for the
+        queue->host mapping; without it the whole cluster maps to nothing).
+        """
+        if not combined_file or not os.path.exists(combined_file):
+            return False
+
+        try:
+            with open(combined_file, 'r') as F:
+                content = F.read()
+        except Exception:
+            return False
+
+        markers = [bqueues_marker, bhosts_marker, bmgroup_marker]
+        sections = {bqueues_marker: [], bhosts_marker: [], bmgroup_marker: []}
+        seen = set()
+        current = None
+
+        # batch_run (output_message_level=1) writes each stdout line indented
+        # by 4 spaces; strip before comparing to a marker.
+        for line in content.split('\n'):
+            stripped = line.strip()
+
+            if stripped in markers:
+                current = stripped
+                seen.add(stripped)
+                continue
+
+            if current is not None:
+                sections[current].append(line)
+
+        # All three markers must be present for a complete sample.
+        if len(seen) != 3:
+            return False
+
+        bqueues_text = '\n'.join(sections[bqueues_marker]).strip()
+        bhosts_text = '\n'.join(sections[bhosts_marker]).strip()
+        bmgroup_text = '\n'.join(sections[bmgroup_marker]).strip()
+
+        # bhosts is load-bearing: without host names the cluster maps to nothing.
+        if not bhosts_text:
+            return False
+
+        # Write the three files the downstream parser expects.
+        for (suffix, text) in (('.bqueues', bqueues_text), ('.bhosts', bhosts_text), ('.bmgroup', bmgroup_text)):
+            file_path = str(self.output_dir) + '/' + str(cluster_prefix) + suffix
+
+            try:
+                with open(file_path, 'w') as OUT:
+                    OUT.write(text + '\n')
+            except Exception as error:
+                common.bprint('Failed on writing "' + str(file_path) + '": ' + str(error), indent=4, level='Warning')
+                return False
+
+        # The combined file is an intermediate artifact; keep only on failure.
+        try:
+            os.remove(combined_file)
+        except Exception:
+            pass
+
+        return True
 
     def collect_host_queue_info(self, host_lsid_dic):
         """
@@ -265,7 +367,7 @@ class SampleHostQueue():
         common.bprint('\n>>> Link current host queue file into host_queue.json')
         common.bprint('ln -s ' + str(self.current_host_queue_file) + ' ' + str(self.latest_host_queue_file), indent=4)
 
-        if os.path.exists(self.latest_host_queue_file):
+        if os.path.lexists(self.latest_host_queue_file):
             try:
                 os.remove(self.latest_host_queue_file)
             except Exception as error:

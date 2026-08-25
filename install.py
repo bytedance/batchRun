@@ -33,15 +33,27 @@ Current python is Python {}.{}.
 def get_ld_library_path_setting():
     """
     Get variable LD_LIBRARY_PATH setting for batchRun.
+
+    Replaces only the trailing "/bin" of the python path (not every "/bin" in
+    it) and uses plain string replacement (not regex) so dots in versioned path
+    segments like ".../python3/3.12.12/bin" are not treated as regex
+    metacharacters when stripping an already-present duplicate.
     """
-    python_lib_path = re.sub('/bin', '/lib', PYTHON_PATH)
+    if PYTHON_PATH.endswith('/bin'):
+        python_lib_path = PYTHON_PATH[:-4] + '/lib'
+    else:
+        python_lib_path = re.sub(r'/bin$', '/lib', PYTHON_PATH)
+
     ld_library_path_setting = 'export LD_LIBRARY_PATH=$BATCH_RUN_INSTALL_PATH/lib:' + str(python_lib_path) + ':'
 
     if 'LD_LIBRARY_PATH' in os.environ:
-        if python_lib_path in str(os.environ['LD_LIBRARY_PATH']):
-            ld_library_path_setting = str(ld_library_path_setting) + re.sub(str(python_lib_path) + ':', '', os.environ['LD_LIBRARY_PATH'])
+        current = str(os.environ['LD_LIBRARY_PATH'])
+
+        if python_lib_path in current:
+            # Strip an already-present duplicate using plain string replace.
+            ld_library_path_setting = str(ld_library_path_setting) + current.replace(str(python_lib_path) + ':', '')
         else:
-            ld_library_path_setting = str(ld_library_path_setting) + str(os.environ['LD_LIBRARY_PATH'])
+            ld_library_path_setting = str(ld_library_path_setting) + current
 
     return ld_library_path_setting
 
@@ -86,12 +98,12 @@ for arg in "$@"
 do
     if [[ $pre_arg == "-c" ]] || [[ $pre_arg == "--command" ]]; then
         if [[ $arg =~ " " ]] && [[ $arg =~ "-" ]]; then
-            arg=`echo $arg | sed 's/-/\\\\\\-/g'`
+            arg=`echo "$arg" | sed 's/-/\\\\\\-/g'`
         fi
     fi
 
     num=$(($num+1))
-    args[$num]=$arg
+    args[$num]="$arg"
     pre_arg=$arg
 done
 
@@ -109,7 +121,7 @@ def gen_shell_tools():
     """
     Generate shell scripts under <BATCH_RUN_INSTALL_PATH>.
     """
-    tool_list = ['bin/batch_run_gui', 'tools/cleanup_log', 'tools/encrypt_python', 'tools/network_scan', 'tools/patch', 'tools/sample_host_info', 'tools/sample_host_queue', 'tools/sample_host_stat', 'tools/save_password', 'tools/show_top_file', 'tools/switch_etc_hosts']
+    tool_list = ['bin/batch_run_gui', 'tools/cleanup_log', 'tools/cleanup_db', 'tools/encrypt_python', 'tools/network_scan', 'tools/patch', 'tools/sample_host_info', 'tools/sample_host_queue', 'tools/sample_host_stat', 'tools/save_password', 'tools/show_top_file', 'tools/switch_etc_hosts']
     ld_library_path_setting = get_ld_library_path_setting()
 
     for tool_name in tool_list:
@@ -132,7 +144,7 @@ export BATCH_RUN_INSTALL_PATH=""" + str(CWD) + """
 """ + str(ld_library_path_setting) + """
 
 # Execute """ + str(tool_name) + """.py.
-python3 $BATCH_RUN_INSTALL_PATH/""" + str(tool_name) + '.py $@')
+python3 $BATCH_RUN_INSTALL_PATH/""" + str(tool_name) + '.py "$@"')
 
             os.chmod(tool, 0o755)
         except Exception as error:
@@ -163,11 +175,17 @@ host_list = '""" + str(host_list) + """'
 db_path = '""" + str(CWD) + """/db'
 
 # Default ssh command.
-default_ssh_command = 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -t -q'
+default_ssh_command = 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ConnectionAttempts=2 -o GSSAPIAuthentication=no -t -q'
 
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
 parallel_timeout = 20
+
+# Upper bound on parallel ssh sessions.
+max_parallel = 512
+
+# Two-phase retry for hosts whose output file is missing/empty.
+retry_failed_hosts = True
 
 # Illegal command list.
 illegal_command_list = ['rm -rf /', 'rm -rf ~', 'rm -rf ~/']
@@ -189,6 +207,15 @@ sample_host_stat_command = '""" + str(CWD) + """/tools/sample_host_stat --groups
 
 # Log retention days (auto-cleanup log files older than this).
 log_retention_days = 30
+
+# History retention days for each db sub-directory (used by cleanup_db tool).
+history_retention_days = {
+    'host_stat': 7,      # *.stat/*.top under <date>/<time>/, biggest consumer
+    'host_asset': 30,    # host_asset_<date>.json, kingdee_assets_*_<date>_<time>.json
+    'host_info': 30,     # host_info.json.<timestamp> snapshots (*.info kept, overwritten per host)
+    'host_queue': 30,    # host_queue.json.<timestamp> snapshots
+    'ai_report': 30,     # *_analysis_<timestamp>.html reports
+}
 
 # AI helpdesk settings (OpenAI-compatible API).
 ai_api_base_url = ''
@@ -225,7 +252,7 @@ ai_dangerous_commands = [
 ]
 """)
 
-            os.chmod(config_file, 0o777)
+            os.chmod(config_file, 0o600)
         except Exception as error:
             print('*Error*: Failed on opening config file "' + str(config_file) + '" for write: ' + str(error))
             sys.exit(1)

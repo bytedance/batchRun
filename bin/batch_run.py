@@ -12,6 +12,8 @@ import sys
 import json
 import time
 import copy
+import shlex
+import subprocess
 import shutil
 import getpass
 import datetime
@@ -26,11 +28,71 @@ import common
 import common_secure
 
 os.environ['PYTHONUNBUFFERED'] = '1'
-VERSION = 'V2.4'
-VERSION_DATE = '2026.06.14'
+VERSION = 'V2.5'
+VERSION_DATE = '2026.08.21'
 START_TIME = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 CURRENT_USER = getpass.getuser()
 LOGIN_USER = common.get_login_user()
+
+
+# Patterns that match recursively destructive commands regardless of flag
+# ordering or trailing whitespace. Matches the *intent* of the blacklist
+# (block wiping the root fs / home / devices) rather than a few exact strings.
+_DESTRUCTIVE_RE_LIST = [
+    re.compile(r'(?:^|[;&|]\s*)rm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|-r\s+-f|-f\s+-r|-rf|-fr)\s+(?:--no-preserve-root\s+)?(?:/(?:[\s*]|$)|/(?:etc|var|usr|bin|sbin|root|home|boot|lib|lib64|proc|sys|dev|opt|run)(?:\s|$|/\*)|~(?:[\s/*]|$))'),
+    re.compile(r'(?:^|[;&|]\s*)find\s+(?:/(?:\s|$)|/(?:etc|var|usr|bin|sbin|root|home|boot|lib|lib64|proc|sys|dev|opt|run)(?:\s|$|/\*))(?:.*?)-delete'),
+    re.compile(r'(?:^|[;&|]\s*)dd\s+.*of=/dev/(?:sd[a-z]+|nvme\d+n\d+|hd[a-z]+|vd[a-z]+|disk\d+)(?:\s|$)'),
+    re.compile(r'(?:^|[;&|]\s*)mkfs(?:\.\w+)?\s+/dev/(?:sd[a-z]+|nvme\d+n\d+|hd[a-z]+|vd[a-z]+|disk\d+)'),
+    re.compile(r':\(\)\s*\{\s*:\|:\&\s*\}\s*;'),  # fork bomb
+]
+
+
+def is_illegal_command(command):
+    """
+    Return True if the command matches the configured blacklist or a built-in
+    destructive-deletion pattern. The configured list is matched literally
+    (escaped), with whitespace normalized so trailing/extra spaces cannot bypass it.
+    """
+    norm = re.sub(r'\s+', ' ', command).strip()
+
+    for illegal_command in getattr(config, 'illegal_command_list', []):
+        epat = re.escape(re.sub(r'\s+', ' ', illegal_command).strip())
+
+        if re.match(r'^' + epat + r'$', norm):
+            return True
+
+    for destructive_re in _DESTRUCTIVE_RE_LIST:
+        if destructive_re.search(command):
+            return True
+
+    return False
+
+
+def redact_command_for_history(argv_list):
+    """
+    Replace values of password-bearing arguments so plaintext passwords are not
+    written into command.his. The original argv is not mutated.
+    """
+    redacted = []
+    skip_next = False
+
+    for index, arg in enumerate(argv_list):
+        if skip_next:
+            redacted.append('***')
+            skip_next = False
+            continue
+
+        if arg in ('-p', '--password'):
+            redacted.append(arg)
+            skip_next = True
+        elif arg.startswith('--password='):
+            redacted.append('--password=***')
+        elif arg.startswith('-p='):
+            redacted.append('-p=***')
+        else:
+            redacted.append(arg)
+
+    return ' '.join(redacted)
 
 
 def read_args():
@@ -81,9 +143,8 @@ def read_args():
                         type=int,
                         default=1,
                         help='''Specify the parallelism of command execution with a number, default is "1" (serial mode).
-"0" : Parallel mode, run all tasks in parallel;
 "1" : Serial mode;
-"n" : Parallel mode, run n tasks in parallel.''')
+"n" : Parallel mode, run n tasks in parallel (must be <= config.max_parallel; "0" unlimited is not allowed).''')
     parser.add_argument('-t', '--timeout',
                         type=int,
                         help='Specify the timeout for SSH, which defaults to ' + str(config.serial_timeout) + ' seconds in serial and ' + str(config.parallel_timeout) + ' seconds in parallel.')
@@ -113,7 +174,7 @@ def read_args():
 
     # Enable GUI mode.
     if args.gui:
-        os.system(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run_gui')
+        subprocess.run([str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run_gui'])
         sys.exit(0)
 
     # Get batchRun version information.
@@ -175,10 +236,27 @@ def read_args():
         format_command = ' '.join(args.command)
         format_command = re.sub(r'\\', '', format_command)
 
-        for illegal_command in config.illegal_command_list:
-            if (format_command == illegal_command) or re.match(r'^' + str(illegal_command) + '$', format_command):
-                common.bprint('Illegal command!', level='Error')
-                sys.exit(1)
+        if is_illegal_command(format_command):
+            common.bprint('Illegal command!', level='Error')
+            sys.exit(1)
+
+    # Reject parallel values that would exhaust file descriptors. pexpect waits
+    # Parallelism is capped by config.max_parallel (set in install.py/config.py;
+    # the getattr fallback keeps batch_run running even if an older config.py
+    # predates the max_parallel key). pexpect waits on poll()/select(); with
+    # hundreds of concurrent ssh sessions the parent holds hundreds of pty fds
+    # and trips the select() FD_SETSIZE=1024 limit, leaving hosts with empty
+    # output. Unlimited parallel ("-P 0") is therefore disallowed -- pick a
+    # number in [1, config.max_parallel]. Serial (1) is always allowed.
+    max_parallel = getattr(config, 'max_parallel', 512)
+
+    if args.parallel == 0:
+        common.bprint('Unlimited parallel ("-P 0") is not allowed; use a number in [1, ' + str(max_parallel) + '].', level='Error')
+        sys.exit(1)
+
+    if args.parallel > max_parallel:
+        common.bprint('Parallel "' + str(args.parallel) + '" exceeds max_parallel "' + str(max_parallel) + '"; lower it or raise config.max_parallel.', level='Error')
+        sys.exit(1)
 
     # Reset default timeout setting.
     if not args.timeout:
@@ -337,7 +415,7 @@ class BatchRun():
                 with open(command_history_file, 'a') as CHF:
                     start_date = START_TIME.split('_')[0]
                     start_time = START_TIME.split('_')[1]
-                    cmd_string = ' '.join(sys.argv).strip()
+                    cmd_string = redact_command_for_history(sys.argv).strip()
                     command_dic = {'date': start_date, 'time': start_time, 'user': CURRENT_USER, 'login_user': LOGIN_USER, 'command': cmd_string, 'log': log_file}
                     CHF.write(str(json.dumps(command_dic, ensure_ascii=False)) + '\n')
             except Exception as warning:
@@ -411,7 +489,7 @@ class BatchRun():
         if config.default_ssh_command:
             ssh_command = config.default_ssh_command
         else:
-            ssh_command = 'ssh -o StrictHostKeyChecking=no -t -q'
+            ssh_command = 'ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o GSSAPIAuthentication=no -t -q'
 
         if ssh_port:
             ssh_command = str(ssh_command) + ' -p ' + str(ssh_port)
@@ -428,13 +506,10 @@ class BatchRun():
             else:
                 ssh_command = str(ssh_command) + ' ' + str(host)
 
-        # Add specified command.
+        # Add specified command. Use shlex.quote for robust single-quoting so
+        # commands containing both ' and " cannot break out of the argument.
         command_string = ' '.join(command_list)
-
-        if '"' in command_string:
-            ssh_command = str(ssh_command) + " '" + str(command_string) + "'"
-        else:
-            ssh_command = str(ssh_command) + ' "' + str(command_string) + '"'
+        ssh_command = str(ssh_command) + ' ' + shlex.quote(command_string)
 
         return ssh_command
 
@@ -499,7 +574,10 @@ class BatchRun():
             self.save_out('    ==== output ====', host=host)
             self.save_log('    ==== output ====')
 
-        # Auto-rerun for "command missing" and "timeout" conditions.
+        # Auto-rerun for "command missing" only. A timeout result is NOT
+        # rerun here: parallel_run's retry_failed_hosts fallback already reruns
+        # empty/timeout hosts at lower concurrency, so an immediate per-host
+        # rerun only stacks extra pexpect timeouts on genuinely dead hosts.
         missing_command = self.check_command_missing(stdout_lines)
         missing_command_path = shutil.which(missing_command)
 
@@ -509,15 +587,13 @@ class BatchRun():
                 self.save_log('    Command missing, scp and rerun.')
 
             stdout_lines = self.scp_and_rerun(host, host_ip, ssh_port, missing_command_path)
-        elif self.check_timeout(stdout_lines):
-            if self.output_message_level == 4:
-                self.save_out('    Ssh timeout, rerun.', host=host)
-                self.save_log('    Ssh timeout, rerun.')
-
-            right_host_format = self.get_right_host_format(host)
-            stdout_lines = common_secure.ssh_run(ssh_command, self.user, right_host_format, self.password, self.timeout)
 
         if not stdout_lines:
+            # Log empty ssh output: previously silent (level != 2 wrote nothing),
+            # which made refused/failed connections look like "no output". Now we
+            # always warn so empty results are visible in the batch_run stdout.
+            common.bprint('Empty ssh output for host "' + str(host) + '" (' + str(host_ip) + ')', level='Warning')
+
             if self.output_message_level == 2:
                 self.save_out('', host=host)
                 self.save_log('')
@@ -551,38 +627,30 @@ class BatchRun():
 
         return ''
 
-    def check_timeout(self, stdout_lines):
-        """
-        Search for auto rerun string on stdout_lines.
-        """
-        if stdout_lines:
-            for line in stdout_lines:
-                for auto_rerun_string in self.timeout_string_list:
-                    if re.search(auto_rerun_string, line):
-                        return True
-
-        return False
-
     def scp_and_rerun(self, host, host_ip, ssh_port, missing_command_path):
         """
         If command missing on remote host, scp missing_command_path to remove host local and rerun.
         """
+        # Use the same host identity as ssh (host_ip when available) for both the
+        # scp target and the password lookup, so auth succeeds on host_name-specified hosts.
+        scp_target = host_ip if host_ip else host
+        right_host_format = self.get_right_host_format(host)
+
         # Scp command/script to remove host /tmp directory.
         script_name = os.path.basename(missing_command_path)
         local_script_path = '/tmp/' + str(script_name)
 
         if ssh_port:
-            scp_command = 'scp -p -P ' + str(ssh_port) + ' ' + str(missing_command_path) + ' ' + str(host) + ':' + str(local_script_path)
+            scp_command = 'scp -p -P ' + str(ssh_port) + ' ' + str(missing_command_path) + ' ' + str(scp_target) + ':' + str(local_script_path)
         else:
-            scp_command = 'scp -p ' + str(missing_command_path) + ' ' + str(host) + ':' + str(local_script_path)
+            scp_command = 'scp -p ' + str(missing_command_path) + ' ' + str(scp_target) + ':' + str(local_script_path)
 
-        common_secure.scp_run(scp_command, self.user, host, self.password, self.timeout)
+        common_secure.scp_run(scp_command, self.user, right_host_format, self.password, self.timeout)
 
         # Re-run command.
         command_list = copy.deepcopy(self.command_list)
         command_list[0] = local_script_path
         ssh_command = self.get_ssh_command(host, host_ip, ssh_port, command_list)
-        right_host_format = self.get_right_host_format(host)
         stdout_lines = common_secure.ssh_run(ssh_command, self.user, right_host_format, self.password, self.timeout)
 
         return stdout_lines
@@ -629,26 +697,10 @@ class BatchRun():
 
         return host_num
 
-    def parallel_run(self):
+    def _collect_targets(self):
         """
-        Run commands in parallel mode.
-        "self.parallel == 0" means no concurrency limit, run all tasks in parallel.
-        "self.parallel == n" means run at most n tasks in parallel.
+        Collect all (host, host_ip, ssh_port) targets from specified_host_dic.
         """
-        host_num = 0
-        thread_list = []
-
-        # "self.parallel == 0" means unlimited concurrency.
-        semaphore = threading.Semaphore(self.parallel) if self.parallel else None
-
-        def worker(host, host_ip, ssh_port):
-            try:
-                self.execute_ssh_command(host, host_ip, ssh_port)
-            finally:
-                if semaphore:
-                    semaphore.release()
-
-        # Collect all (host, host_ip, ssh_port) targets.
         target_list = []
 
         for host in self.specified_host_dic.keys():
@@ -664,6 +716,35 @@ class BatchRun():
 
                 target_list.append((host, None, ssh_port))
 
+        return target_list
+
+    def _run_targets(self, target_list, parallel):
+        """
+        Run a list of (host, host_ip, ssh_port) targets with the given
+        parallelism and return the count actually executed.
+        "parallel == 0" means no concurrency limit.
+        """
+        host_num = 0
+        thread_list = []
+
+        # "parallel == 0" means unlimited concurrency.
+        semaphore = threading.Semaphore(parallel) if parallel else None
+
+        def worker(host, host_ip, ssh_port):
+            try:
+                self.execute_ssh_command(host, host_ip, ssh_port)
+            except Exception as error:
+                # Record instead of silently dying so the user knows a host was skipped.
+                common.bprint(f'Failed on host "{host}" ({host_ip}): {error}', level='Warning')
+
+                try:
+                    self.save_log(f'>>> {host} ({host_ip}) failed: {error}')
+                except Exception:
+                    pass
+            finally:
+                if semaphore:
+                    semaphore.release()
+
         # Start threads, acquiring the semaphore before each start to enforce parallelism.
         for (host, host_ip, ssh_port) in target_list:
             if semaphore:
@@ -677,6 +758,155 @@ class BatchRun():
         # Wait for all threads to finish.
         for thread in thread_list:
             thread.join()
+
+        return host_num
+
+    def _output_file_for_host(self, host):
+        """
+        Return the per-host output file path (HOST placeholder substituted),
+        or '' when no output_file is configured.
+        """
+        if not self.output_file:
+            return ''
+
+        return re.sub('HOST', host, self.output_file)
+
+    def _is_target_failed(self, host):
+        """
+        Judge whether a host failed: its output file is missing, empty, or only
+        contains a timeout/exception marker. Used to pick retry candidates
+        after the first parallel pass.
+
+        Note: a command that legitimately produces no output would also be
+        flagged -- the retry is idempotent for such hosts, so this is safe.
+        """
+        output_file = self._output_file_for_host(host)
+
+        if not output_file or not os.path.exists(output_file):
+            return True
+
+        try:
+            with open(output_file, 'r') as OF:
+                content = OF.read()
+        except Exception:
+            return True
+
+        if not content.strip():
+            return True
+
+        # Content that is only a timeout/exception marker counts as failure.
+        for line in content.split('\n'):
+            for marker in self.timeout_string_list:
+                if marker in line:
+                    return True
+
+        return False
+
+    def parallel_run(self):
+        """
+        Run commands in parallel mode.
+        "self.parallel == 0" means no concurrency limit, run all tasks in parallel.
+        "self.parallel == n" means run at most n tasks in parallel.
+
+        Two-phase execution: after the first pass finishes, hosts whose output
+        file is missing/empty (connection refused or dropped under high
+        parallelism) are collected and rerun at lower concurrency. By then the
+        bulk of the batch is done, sshd is no longer under startup pressure
+        (MaxStartups), and the retries usually succeed. Only applies when an
+        output_file is set, since that is the per-host success signal.
+        """
+        target_list = self._collect_targets()
+        host_num = self._run_targets(target_list, self.parallel)
+        retry_failed = getattr(config, 'retry_failed_hosts', True)
+
+        if not (retry_failed and self.output_file and target_list):
+            return host_num
+
+        # Collect hosts that still have no usable output after the first pass.
+        failed_targets = []
+
+        for target in target_list:
+            host = target[0]
+
+            if not self._is_target_failed(host):
+                continue
+
+            failed_targets.append(target)
+
+        if not failed_targets:
+            return host_num
+
+        # Retry pass: rerun failures at lower concurrency, in multiple rounds.
+        # Since each retry call now does a single pexpect attempt
+        # (config.ssh_login_attempts defaults to 1, and execute_ssh_command no
+        # longer immediately reruns on timeout), one retry round recovers too
+        # few transient/slow hosts -- a host that times out once often succeeds
+        # on a fresh connection. So we loop: hosts that produce usable output
+        # drop out, the rest get another low-concurrency attempt, up to
+        # retry_failed_rounds. Genuinely dead hosts pay one timeout per round,
+        # but the retry set is small and each round runs in parallel, so the
+        # cost is bounded (rounds * one timeout batch).
+        retry_rounds = getattr(config, 'retry_failed_rounds', 1)
+
+        try:
+            retry_rounds = int(retry_rounds)
+        except Exception:
+            retry_rounds = 1
+
+        if retry_rounds < 1:
+            retry_rounds = 1
+
+        retry_parallel = min(len(failed_targets), max(1, self.parallel))
+        common.bprint(
+            'First pass done: ' + str(len(failed_targets)) + ' host(s) failed (empty/timeout), will retry up to ' + str(retry_rounds) + ' round(s) at parallel=' + str(retry_parallel) + '.',
+            level='Info',
+        )
+
+        for round_idx in range(1, retry_rounds + 1):
+            # Remove stale output files for the current retry set so each
+            # attempt writes a clean file (save_out appends, and a leftover
+            # timeout marker would mask fresh success).
+            for target in failed_targets:
+                output_file = self._output_file_for_host(target[0])
+
+                if output_file and os.path.exists(output_file):
+                    try:
+                        os.remove(output_file)
+                    except Exception:
+                        pass
+
+            before = len(failed_targets)
+            self._run_targets(failed_targets, retry_parallel)
+
+            # Hosts that now have usable output are done; keep only the rest.
+            failed_targets = [t for t in failed_targets if self._is_target_failed(t[0])]
+
+            recovered = before - len(failed_targets)
+
+            if not failed_targets:
+                common.bprint(
+                    'Retry round ' + str(round_idx) + '/' + str(retry_rounds) + ': recovered ' + str(recovered) + ', 0 remaining -> all done.',
+                    level='Info',
+                )
+                return host_num
+
+            if round_idx < retry_rounds:
+                common.bprint(
+                    'Retry round ' + str(round_idx) + '/' + str(retry_rounds) + ': recovered ' + str(recovered) + ', ' + str(len(failed_targets)) + ' still failing -> will retry.',
+                    level='Info',
+                )
+            else:
+                common.bprint(
+                    'Retry round ' + str(round_idx) + '/' + str(retry_rounds) + ': recovered ' + str(recovered) + ', ' + str(len(failed_targets)) + ' still failing -> no rounds left, giving up.',
+                    level='Info',
+                )
+
+        # Report hosts still failing after all retry rounds.
+        still_failed = [t[0] for t in failed_targets]
+        common.bprint(
+            str(len(still_failed)) + ' host(s) still have no output after ' + str(retry_rounds) + ' retry round(s): ' + ', '.join(still_failed),
+            level='Warning',
+        )
 
         return host_num
 

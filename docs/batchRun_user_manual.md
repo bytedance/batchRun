@@ -3,9 +3,9 @@
 | 项目 | 内容 |
 |------|------|
 | Product Name | batchRun |
-| Product Version | V2.4 |
-| Release Date | 2026.06.14 |
-| Contact | @李艳青 (liyanqing.1987@bytedance.com) |
+| Product Version | V2.5 |
+| Release Date | 2026.08.21 |
+| Contact | @李艳青 |
 
 ---
 
@@ -167,13 +167,16 @@ host_list = '/ic/software/cad_tools/it/batchRun/config/host.list'
 db_path = '/ic/data/CAD/it/batchRun/db'
 
 # Default ssh command.
-default_ssh_command = 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -t -q'
+default_ssh_command = 'ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -t -q'
 
 # Define timeout for ssh command, unit is "second".
 serial_timeout = 10
 parallel_timeout = 20
 
-# Illegal command list.
+# Illegal command list (matched literally; only whitespace is normalized so
+# extra spaces cannot bypass it). To block whole classes of destructive
+# commands (rm -rf /etc, dd to a block device, fork bombs, ...) without
+# enumerating them, batch_run also ships built-in destructive-command patterns.
 illegal_command_list = ['rm -rf /', 'rm -rf ~', 'rm -rf ~/']
 
 # Command for switch_etc_hosts.
@@ -222,10 +225,10 @@ ai_dangerous_commands = [
 |--------|------|
 | `host_list` | 指定 host.list 文件位置 |
 | `db_path` | 指定数据库路径 |
-| `default_ssh_command` | 指定默认 SSH 命令 |
+| `default_ssh_command` | 指定默认 SSH 命令，默认使用 `StrictHostKeyChecking=accept-new`（首次连接自动信任、后续变更会告警） |
 | `serial_timeout` | 串行执行 SSH 超时时间（秒），如经常执行耗时任务可适当调大 |
-| `parallel_timeout` | 并行执行 SSH 超时时间（秒） |
-| `illegal_command_list` | 违法命令列表，支持正则匹配，batch_run 将拒绝执行 |
+| `parallel_timeout` | 并行执行 SSH 超时时间（秒），默认 20 秒 |
+| `illegal_command_list` | 违法命令列表，按字面精确匹配（仅做空白归一化），batch_run 将拒绝执行；另内置破坏性命令模式（如 `rm -rf /etc`、`dd` 写裸设备、fork bomb 等）会自动拦截 |
 | `switch_etc_hosts_command` | GUI 界面上转换 /etc/hosts 到 host.list 的命令 |
 | `network_scan_command` | GUI 界面上进行网络扫描的命令 |
 | `sample_host_info_command` | GUI 界面上采集服务器静态信息的命令 |
@@ -383,7 +386,15 @@ cloud_red_windows    10.249.73.192/28
 
 在使用 batchRun 做多服务器的批量部署时，如果远程服务器没有配置 SSH 免密登陆，则需要使用账号+密码的方式登陆。
 
-密码由工具 `tools/save_password` 生成并加密保存，用法参照 [5.1 save_password](#51-save_password)。
+密码由工具 `tools/save_password` 加密保存，用法参照 [5.1 save_password](#51-save_password)。
+
+**密码存储安全模型**（V2.5 安全加固后）：
+
+- 密码使用 **Fernet 加密**（AES-128-CBC + HMAC-SHA256）存储，加密密钥（master key）独立保存在密码目录下的 `.master_key` 文件中，与密文分离。
+- 密码文件 `<db_path>/password/<user>` 权限为 `0o600`，master key 文件同为 `0o600`，密码目录权限为 `0o700`。
+- 写入采用临时文件 + 原子重命名，避免崩溃产生半截文件；每条记录附带 HMAC-SHA256 完整性校验。
+- 旧版本生成的密码条目仍可读取（按需解密迁移），新写入一律使用 Fernet。
+- 推荐通过 `BATCH_RUN_PASSWORD` 环境变量或交互式输入提供密码，避免密码出现在命令行参数（`ps`/shell history 可见）。
 
 ### 3.4 工具采样
 
@@ -506,7 +517,7 @@ batch_run -h
 | `-u, --user` | 指定 SSH 登录用户（默认当前用户） |
 | `-p, --password` | 指定 SSH 登录密码 |
 | `-c, --command` | 指定要执行的命令 |
-| `-P, --parallel` | 指定并行度（0=全并行，1=串行，N=N路并行） |
+| `-P, --parallel` | 指定并行度（1=串行，N=N路并行，须 ≤ config.max_parallel，默认512；`-P 0` 不允许） |
 | `-t, --timeout` | SSH 超时时间（串行默认 10 秒，并行默认 20 秒） |
 | `-l, --output_message_level` | 输出级别 0-4 |
 | `-o, --output_file` | 输出重定向到文件 |
@@ -517,8 +528,8 @@ batch_run -h
 
 ```bash
 [root@ic-admin2 batchRun]# bin/batch_run --version
-Version : V2.4
-Release : 2026.06.14
+Version : V2.5
+Release : 2026.08.21
 ```
 
 #### 4.2.3 列出指定机器
@@ -537,17 +548,24 @@ bin/batch_run --list --groups IC_CMP
 bin/batch_run --host 10.232.135.143 --user liyanqing.1987 --password *** --command whoami
 ```
 
-> 因为明文密码会导致敏感信息泄露，并不推荐这种方式，建议配置 SSH 免密登录或采用内置加密密码的方式。
+> 因为明文密码会导致敏感信息泄露，并不推荐这种方式，建议配置 SSH 免密登录或采用内置加密密码的方式。若使用 `--password`，batch_run 会将密码在写入命令历史时脱敏为 `***`，但命令行参数在执行期间仍可被 `ps` 看到，故仍建议优先使用 `save_password` 或 `BATCH_RUN_PASSWORD` 环境变量。
 
 #### 4.2.5 采用内置加密密码登录远程机器
 
 使用 `save_password` 保存加密密码后，batch_run 可以直接使用加密密码登录：
 
 ```bash
-# 保存加密密码
-tools/save_password --password ***
+# 保存加密密码（推荐交互式输入，避免密码出现在命令行历史）
+tools/save_password --host ic-monitor01
 
 # 之后即可无需输入密码
+bin/batch_run --hosts 10.232.135.143 --command whoami
+```
+
+也可以通过 `BATCH_RUN_PASSWORD` 环境变量临时提供密码（不会落入 `argv`/`ps`，优先级高于加密存储）：
+
+```bash
+export BATCH_RUN_PASSWORD='***'
 bin/batch_run --hosts 10.232.135.143 --command whoami
 ```
 
@@ -592,19 +610,26 @@ bin/batch_run --groups IC_CMP --command hostname --output_message_level 2
 ```bash
 bin/batch_run --hosts 10.232.158.56 --command /ic/software/cad_tools/bin/test_echo.sh --output_message_level 4
 >>> 10.232.158.56
-ssh -o StrictHostKeyChecking=no -t -q root@10.232.158.56 /ic/software/cad_tools/bin/test_echo.sh
+ssh -o StrictHostKeyChecking=accept-new -t -q root@10.232.158.56 /ic/software/cad_tools/bin/test_echo.sh
 ==== output ====
 Command missing, scp and rerun.
 This is a test
 ================
 ```
 
-**非法命令拦截**：尝试执行 `illegal_command_list` 中定义的非法命令时会被自动拒绝：
+**非法命令拦截**：尝试执行 `illegal_command_list` 中定义的非法命令时会被自动拒绝；列表按字面精确匹配（仅归一化空白，避免额外空格绕过）。此外 batch_run 内置了对破坏性命令模式的拦截，即使未在列表中列出，如下命令也会被拒绝：
+
+- `rm -rf /`、`rm -rf /etc`、`rm -rf ~` 等擦除受保护根目录/家目录的操作
+- `find / -delete` 类擦除
+- `dd of=/dev/sdX` 写裸设备、`mkfs` 格式化块设备
+- fork bomb `:(){ :|:& };`
 
 ```bash
 [root@ic-admin2 batchRun]# bin/batch_run --groups ALL --command "rm -rf /"
 *Error*: Illegal command!
 ```
+
+> 对具体子路径（如 `rm -rf /home/user/proj`、`rm -rf /tmp/build`）不会被误拦，仍可正常执行。
 
 #### 4.2.9 串行执行和并行执行
 
@@ -612,12 +637,11 @@ This is a test
 # 串行执行（默认）
 bin/batch_run --groups IC_ETX IC_CMP --command hostname --parallel 1
 
-# 全并行执行
-bin/batch_run --groups IC_ETX IC_CMP --command hostname --parallel 0
-
-# 指定并行度
+# 指定并行度（N 路；上限 config.max_parallel，默认 512，-P 0 不允许）
 bin/batch_run --groups IC_ETX IC_CMP --command hostname --parallel 10
 ```
+
+> 注：旧版本的 `-P 0`（无限并行）已被移除，因为它在高并发下会突破 select() 的 fd 上限（FD_SETSIZE=1024），导致部分主机静默无输出。请使用 [1, `config.max_parallel`] 范围内的值。
 
 #### 4.2.10 超时时间（timeout）
 
@@ -754,7 +778,7 @@ AI 页是 batchRun 集成的 AI 助手对话界面，可以直接咨询集群相
 - 基于 OpenAI 兼容 API 的对话式助手
 - 支持查询集群状态、主机健康、安全信息、资产信息等
 - AI 可以调用 batchRun 内置的 skills（技能）来执行实际操作
-- 对于 `ai_dangerous_commands` 中定义的危险命令，AI 执行前会弹出确认对话框
+- 对于 `ai_dangerous_commands` 中定义的危险命令，AI 执行前会弹出确认对话框。除列表匹配外，AI 还会检测可能绕过黑名单的命令构造并要求确认，包括：命令替换/反引号/进程替换（`$(...)`、`` `...` ``）、编码与执行垫片（`base64`/`xxd`/`eval`/`xargs`/`source`/`tee` 等）、以及解释器内联执行（`python -c`、`bash -c`、`perl -e` 等）。检测到这些构造时一律要求用户确认后才执行。
 - 提供用户反馈机制（Solved/Unsolved）用于评估 AI 回答质量
 - AI Debug 模式可通过 AI 菜单中的 Debug 选项开启，用于查看 AI 的详细推理过程
 - 输入框支持多行输入（Shift+Enter 换行，Enter 发送）
@@ -804,19 +828,30 @@ tools/save_password --help
 
 | 参数 | 说明 |
 |------|------|
-| `--password` | 指定用户明文密码 |
+| `--password` | 指定用户明文密码（可选；不建议，因会留在命令行历史/`ps` 中） |
 | `--host` | 指定密码生效的机器名，默认 "default"（对所有机器生效） |
 | `--output_file` | 指定输出文件，默认为 `<db_path>/password/<user>` |
+
+密码解析优先级（由高到低）：`-p/--password` 参数 → `BATCH_RUN_PASSWORD` 环境变量 → 交互式 `getpass` 输入。若三者均无则报错退出，不会保存空密码。
 
 示例：
 
 ```bash
-# 为所有机器保存通用密码
-tools/save_password --password ***
+# 推荐方式：交互式输入（屏幕不回显）
+tools/save_password --host ic-monitor01
 
-# 为指定机器保存密码
+# 通过环境变量提供（不回显、不留在命令行历史）
+BATCH_RUN_PASSWORD='***' tools/save_password --host ic-monitor01
+
+# 兼容旧用法：命令行参数（不推荐，密码会出现在 ps/历史中）
 tools/save_password --password *** --host ic-monitor01
 ```
+
+存储说明：
+
+- 密码以 Fernet 加密（AES-128-CBC + HMAC-SHA256）保存于 `<db_path>/password/<user>`，master key 独立存放于同目录下 `.master_key`。
+- 密码文件与 master key 文件权限均为 `0o600`，密码目录权限为 `0o700`，仅属主可读写。
+- 写入采用临时文件 + 原子重命名；旧版本密码条目仍可读取（兼容迁移）。
 
 ### 5.2 switch_etc_hosts
 
@@ -1052,6 +1087,7 @@ tools/patch -p ~/batchRun-master
 | 2025.02 | V2.2 | GUI 合并 GROUP 和 HOST 页；GUI 增加 ASSET 页（资产信息）；支持 host/group 模糊匹配；RUN 页默认读取 "RUN" 组服务器列表；增加 illegal command 检查功能 |
 | 2025.12 | V2.3 | GUI STAT 页增加指定服务器的历史 stat 曲线展示 |
 | 2026.06 | V2.4 | 新增 AI 页：AI 助手对话（支持 skills 调用）；AI 菜单增加集群分析报告（SSH连通性+资产一致性+机器异常）和安全分析报告（SSH配置/账户/端口/文件权限/内核/定时任务/OS/安全工具）；新增 AI 危险命令确认机制；新增日志自动清理功能（log_retention_days） |
+| 2026.08 | V2.5 | 安全加固：密码存储改用 Fernet 加密 + 独立 master key（文件 0o600、目录 0o700）；`save_password` 支持 `BATCH_RUN_PASSWORD` 环境变量与交互式输入优先；内置 web 服务增加路径穿越防护与 token 鉴权；STAT/RUN/ASSET 页表达式求值改用 AST 安全求值器；SQLite 标识符校验防注入、`update_resolution` 改参数化查询；SSH 默认 `StrictHostKeyChecking=accept-new`、命令经 `shlex.quote` 转义；AI 危险命令检测增强（命令替换/编码垫片/解释器 -c）；命令历史对密码参数脱敏；GUI 工具执行改为非阻塞线程，避免界面冻结；`-P 0` 不再允许（改用 [1, max_parallel]）；sample 工具密码经环境变量传子进程；密码 HMAC 不再依赖 Fernet 私有属性 |
 
 ### 附2. config/host.list 编写规则
 

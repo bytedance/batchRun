@@ -44,8 +44,8 @@ def read_args():
                         help='Specify the user password for SSH login to specified host.')
     parser.add_argument('-P', '--parallel',
                         type=int,
-                        default=0,
-                        help='Specify the parallelism for batch_run.')
+                        default=getattr(config, 'max_parallel', 512),
+                        help='Specify the parallelism for batch_run, default is config.max_parallel.')
     parser.add_argument('-t', '--timeout',
                         type=int,
                         default=20,
@@ -68,6 +68,12 @@ def read_args():
 
 class SampleHostInfo():
     def __init__(self, host_list, group_list, user, password, parallel, timeout, output_dir):
+        # Pass the password via the BATCH_RUN_PASSWORD env var (inherited by the
+        # batch_run subprocess) instead of a "--password" CLI argument, so it
+        # is not exposed in the child process argv / `ps`.
+        if password:
+            os.environ['BATCH_RUN_PASSWORD'] = password
+
         self.batch_run_command = self.get_batch_run_command(host_list, group_list, user, password, parallel, timeout)
         self.output_dir = output_dir
         self.host_list_file = str(self.output_dir) + '/host_list.json'
@@ -91,9 +97,6 @@ class SampleHostInfo():
         if user:
             batch_run_command = str(batch_run_command) + ' --user ' + str(user)
 
-        if password:
-            batch_run_command = str(batch_run_command) + ' --password ' + str(password)
-
         batch_run_command = str(batch_run_command) + ' --parallel ' + str(parallel)
 
         if timeout:
@@ -102,25 +105,29 @@ class SampleHostInfo():
         return batch_run_command
 
     def cleanup(self):
-        command = 'rm -rf *.info host_list.json'
         common.bprint('\n>>> Clean up ' + str(self.output_dir) + ' ...')
-        common.bprint(command, indent=4)
-        os.chdir(self.output_dir)
-        os.system(command)
-        os.chdir(CWD)
+
+        import glob
+
+        for pattern in ('*.info', 'host_list.json'):
+            for path in glob.glob(str(self.output_dir) + '/' + pattern):
+                try:
+                    os.remove(path)
+                except OSError as error:
+                    common.bprint('    *Error*: ' + str(error), indent=4)
 
     def sample_host_list_info(self):
         command = str(self.batch_run_command) + ' --list --output_file ' + str(self.host_list_file)
         common.bprint('\n>>> Sampling host list information ...')
         common.bprint(command, indent=4)
-        os.system(command)
+        common.run_command(command)
 
     def sample_host_os_hard_info(self):
         sample_command = 'lsb_release -a; hostnamectl; lscpu; free -g'
         command = str(self.batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.info'
         common.bprint('\n>>> Sampling host os/cpu/mem information ...')
         common.bprint(command, indent=4)
-        os.system(command)
+        common.run_command(command)
 
     def collect_host_os_hard_info(self):
         common.bprint('\n>>> Collecting host information ...')
@@ -207,7 +214,7 @@ class SampleHostInfo():
                             host_info_dic[host_ip]['cpu_model'] = my_match.group(1)
                         elif cpu_frequency_compile.match(line):
                             my_match = cpu_frequency_compile.match(line)
-                            host_info_dic[host_ip]['cpu_frequency'] = round(float(my_match.group(1))/1000, 1)
+                            host_info_dic[host_ip]['cpu_frequency'] = round(float(my_match.group(1)) / 1000, 1)
                         elif mem_size_compile.match(line):
                             my_match = mem_size_compile.match(line)
                             host_info_dic[host_ip]['mem_size'] = int(my_match.group(1))

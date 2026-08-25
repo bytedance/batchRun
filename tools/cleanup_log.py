@@ -45,7 +45,14 @@ def cleanup_log(days=30, users=None, dry_run=False):
     freed_bytes = 0
 
     if not users:
-        users = [d for d in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, d))]
+        try:
+            entries = os.scandir(log_dir)
+        except OSError as e:
+            common.bprint(f'Failed to scan "{log_dir}": {e}', level='Warning')
+            return (0, 0)
+
+        with entries:
+            users = [entry.name for entry in entries if entry.is_dir()]
 
     for user in users:
         user_dir = os.path.join(log_dir, user)
@@ -55,36 +62,35 @@ def cleanup_log(days=30, users=None, dry_run=False):
 
         # Cleanup log output files (everything except command.his).
         try:
-            dir_contents = os.listdir(user_dir)
+            dir_entries = os.scandir(user_dir)
         except PermissionError:
             continue
 
-        for filename in dir_contents:
-            if filename == 'command.his':
-                continue
+        with dir_entries:
+            for entry in dir_entries:
+                if entry.name == 'command.his':
+                    continue
 
-            filepath = os.path.join(user_dir, filename)
+                if not entry.is_file() or entry.is_symlink():
+                    continue
 
-            if not os.path.isfile(filepath):
-                continue
+                try:
+                    stat_info = entry.stat()
+                except OSError:
+                    continue
 
-            try:
-                mtime = os.path.getmtime(filepath)
-            except OSError:
-                continue
+                if stat_info.st_mtime < cutoff_time:
+                    file_size = stat_info.st_size
 
-            if mtime < cutoff_time:
-                file_size = os.path.getsize(filepath)
-
-                if dry_run:
-                    print(f'  [dry-run] Would delete: {filepath} ({file_size / 1024 / 1024:.1f} MB)')
-                else:
-                    try:
-                        os.remove(filepath)
-                        deleted_count += 1
-                        freed_bytes += file_size
-                    except OSError as e:
-                        common.bprint(f'Failed to delete "{filepath}": {e}', level='Warning')
+                    if dry_run:
+                        print(f'  [dry-run] Would delete: {entry.path} ({file_size / 1024 / 1024:.1f} MB)')
+                    else:
+                        try:
+                            os.remove(entry.path)
+                            deleted_count += 1
+                            freed_bytes += file_size
+                        except OSError as e:
+                            common.bprint(f'Failed to delete "{entry.path}": {e}', level='Warning')
 
         # Trim command.his: remove entries older than cutoff.
         command_his_file = os.path.join(user_dir, 'command.his')

@@ -48,8 +48,25 @@ STOP_WORDS = {
 
 
 def gen_table_name(user):
-    """Generate per-user table name."""
-    return f'conversations_{user}'
+    """Generate per-user table name.
+
+    The user name is sanitized so the resulting table name matches the
+    ``[A-Za-z_][A-Za-z0-9_]*`` identifier whitelist enforced by
+    common_sqlite3._validate_identifier. User names in this environment commonly
+    contain '.' (e.g. 'liyanqing.1987'), which is not a valid SQL identifier
+    character; we replace every non-identifier character with '_'.
+
+    This mapping is not reversible (both '.' and '_' collapse to '_'), so
+    get_user_list() returns the sanitized form. That is acceptable: the AI log
+    subsystem has no legacy data to migrate (it never worked before the
+    connect_preprocess fix), and cross-user listing is a root-only display path.
+    """
+    safe_user = re.sub(r'[^A-Za-z0-9_]', '_', str(user))
+
+    if not safe_user or safe_user[0].isdigit():
+        safe_user = '_' + safe_user
+
+    return 'conversations_' + safe_user
 
 
 def gen_session_id():
@@ -117,9 +134,9 @@ def save_conversation(db_file, session_id, user, cluster, host, question, answer
 def update_resolution(db_file, session_id, resolution, user=''):
     """Update the resolution status of a conversation."""
     for table_name in _get_target_tables(db_file, user):
-        set_condition = f"SET resolution='{resolution}'"
-        where_condition = f"WHERE session_id='{session_id}'"
-        common_sqlite3.update_sql_table_data(db_file, '', table_name, set_condition=set_condition, where_condition=where_condition)
+        set_condition = "SET resolution=?"
+        where_condition = "WHERE session_id=?"
+        common_sqlite3.update_sql_table_data(db_file, '', table_name, set_condition=set_condition, where_condition=where_condition, params=[resolution, session_id])
 
 
 def search_conversations(db_file, keyword='', user='', date_start='', date_end='', resolution='', limit=200):
@@ -132,19 +149,24 @@ def search_conversations(db_file, keyword='', user='', date_start='', date_end='
         return {}
 
     conditions = []
+    params = []
 
     if keyword:
-        safe_keyword = keyword.replace("'", "''")
-        conditions.append(f"(question LIKE '%{safe_keyword}%' OR answer LIKE '%{safe_keyword}%' OR keywords LIKE '%{safe_keyword}%')")
+        conditions.append("(question LIKE ? OR answer LIKE ? OR keywords LIKE ?)")
+        kw_pat = '%' + keyword + '%'
+        params.extend([kw_pat, kw_pat, kw_pat])
 
     if date_start:
-        conditions.append(f"timestamp >= '{date_start} 00:00:00'")
+        conditions.append("timestamp >= ?")
+        params.append(str(date_start) + ' 00:00:00')
 
     if date_end:
-        conditions.append(f"timestamp <= '{date_end} 23:59:59'")
+        conditions.append("timestamp <= ?")
+        params.append(str(date_end) + ' 23:59:59')
 
     if resolution and resolution != 'all':
-        conditions.append(f"resolution='{resolution}'")
+        conditions.append("resolution = ?")
+        params.append(resolution)
 
     where_clause = ''
 
@@ -155,8 +177,8 @@ def search_conversations(db_file, keyword='', user='', date_start='', date_end='
     target_tables = _get_target_tables(db_file, user)
 
     for table_name in target_tables:
-        select_condition = f"{where_clause} ORDER BY timestamp DESC LIMIT {limit}"
-        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition)
+        select_condition = str(where_clause) + " ORDER BY timestamp DESC LIMIT ?"
+        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition, select_params=params + [int(limit)])
 
         if data_dic:
             if not merged:
@@ -198,22 +220,25 @@ def find_similar_conversations(db_file, user_message, limit=3):
 
     # Build LIKE conditions for keyword matching.
     like_parts = []
+    params = []
 
     for kw in query_keywords[:10]:
-        safe_kw = kw.replace("'", "''")
-        like_parts.append(f"(keywords LIKE '%{safe_kw}%' OR question LIKE '%{safe_kw}%')")
+        like_parts.append("(keywords LIKE ? OR question LIKE ?)")
+        kw_pat = '%' + kw + '%'
+        params.extend([kw_pat, kw_pat])
 
     if not like_parts:
         return []
 
-    where_clause = f"WHERE resolution='solved' AND ({' OR '.join(like_parts)})"
-    select_condition = f"{where_clause} ORDER BY timestamp DESC LIMIT {limit * 3}"
+    where_clause = "WHERE resolution='solved' AND (" + ' OR '.join(like_parts) + ")"
+    select_condition = str(where_clause) + " ORDER BY timestamp DESC LIMIT ?"
+    params.append(int(limit) * 3)
 
     # Search across all user tables.
     all_results = []
 
     for table_name in _get_target_tables(db_file, ''):
-        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition)
+        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition, select_params=params)
 
         if not data_dic or 'question' not in data_dic:
             continue
@@ -291,7 +316,12 @@ def cleanup_conversations(db_file, user, entries_limit):
 
 
 def get_user_list(db_file):
-    """Get all user names from the database by inspecting table names."""
+    """Get all user names from the database by inspecting table names.
+
+    Returns the sanitized user names (see gen_table_name): non-identifier
+    chars like '.' are collapsed to '_', so 'liyanqing.1987' shows as
+    'liyanqing_1987'. The mapping is lossy; this is display-only.
+    """
     if not os.path.exists(db_file):
         return []
 
@@ -365,6 +395,7 @@ def auto_judge_resolution(question, answer, tool_calls=None):
                     continue
 
                 result = (call.get('result', '') or '').lower()
+
                 # Command returned error indicators.
                 if re.search(r'(error|failed|permission denied|not found|no such|command not found|traceback|exception)', result):
                     error_count += 1
@@ -452,18 +483,20 @@ def find_relevant_insights(db_file, user_message, limit=5):
         return []
 
     like_parts = []
+    params = []
 
     for kw in query_keywords[:8]:
-        safe_kw = kw.replace("'", "''")
-        like_parts.append(f"keywords LIKE '%{safe_kw}%'")
+        like_parts.append("keywords LIKE ?")
+        params.append('%' + kw + '%')
 
     if not like_parts:
         return []
 
-    where_clause = f"WHERE {' OR '.join(like_parts)}"
-    select_condition = f"{where_clause} ORDER BY timestamp DESC LIMIT {limit * 3}"
+    where_clause = "WHERE " + ' OR '.join(like_parts)
+    select_condition = str(where_clause) + " ORDER BY timestamp DESC LIMIT ?"
+    params.append(int(limit) * 3)
 
-    data_dic = common_sqlite3.get_sql_table_data(db_file, '', INSIGHTS_TABLE, select_condition=select_condition)
+    data_dic = common_sqlite3.get_sql_table_data(db_file, '', INSIGHTS_TABLE, select_condition=select_condition, select_params=params)
 
     if not data_dic or 'insight' not in data_dic:
         return []
@@ -511,22 +544,25 @@ def get_tool_preferences(db_file, user_message, min_count=2):
         return []
 
     like_parts = []
+    params = []
 
     for kw in query_keywords[:8]:
-        safe_kw = kw.replace("'", "''")
-        like_parts.append(f"(keywords LIKE '%{safe_kw}%' OR question LIKE '%{safe_kw}%')")
+        like_parts.append("(keywords LIKE ? OR question LIKE ?)")
+        kw_pat = '%' + kw + '%'
+        params.extend([kw_pat, kw_pat])
 
     if not like_parts:
         return []
 
-    where_clause = f"WHERE resolution='solved' AND tool_calls != '[]' AND ({' OR '.join(like_parts)})"
-    select_condition = f"{where_clause} ORDER BY timestamp DESC LIMIT 50"
+    where_clause = "WHERE resolution='solved' AND tool_calls != '[]' AND (" + ' OR '.join(like_parts) + ")"
+    select_condition = str(where_clause) + " ORDER BY timestamp DESC LIMIT ?"
+    params.append(50)
 
     # Scan all user tables.
     all_tool_calls = []
 
     for table_name in _get_target_tables(db_file, ''):
-        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition)
+        data_dic = common_sqlite3.get_sql_table_data(db_file, '', table_name, select_condition=select_condition, select_params=params)
 
         if not data_dic or 'tool_calls' not in data_dic:
             continue

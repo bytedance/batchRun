@@ -68,9 +68,9 @@ batch_run [选项]
 | `-G, --groups` | 指定主机分组 | `-G GPU_SERVER ALL` |
 | `-L, --list` | 仅列出匹配的主机，不执行命令 | `-G ALL -L` |
 | `-u, --user` | 指定 SSH 登录用户（默认当前用户） | `-u root` |
-| `-p, --password` | 指定 SSH 密码（不推荐明文） | |
+| `-p, --password` | 指定 SSH 密码（不推荐明文；写入历史时已脱敏为 `***`，但执行期间仍可被 `ps` 看到，建议改用 `BATCH_RUN_PASSWORD` 环境变量或 `save_password`） | |
 | `-c, --command` | 要执行的命令 | `-c 'uptime'` |
-| `-P, --parallel` | 并行度：0=全部并行，1=串行，n=n路并行 | `-P 128` |
+| `-P, --parallel` | 并行度：1=串行，n=n路并行（≤ config.max_parallel，默认512；`-P 0` 不允许） | `-P 128` |
 | `-t, --timeout` | SSH 超时秒数（串行默认10s，并行默认20s） | `-t 30` |
 | `-l, --output_message_level` | 输出级别（0-4） | `-l 1` |
 | `-o, --output_file` | 输出到文件（HOST会被替换为主机IP） | `-o /tmp/out/HOST` |
@@ -267,10 +267,20 @@ sample_host_queue --groups ALL
 
 ```bash
 save_password
-# 交互式输入密码，加密保存到 db/password/<user>
+# 交互式输入密码（不回显），加密保存到 db/password/<user>
 ```
 
-密码保存后，`batch_run` 和 GUI 可免密执行 SSH（自动读取加密密码）。
+密码解析优先级：`-p/--password` 参数 → `BATCH_RUN_PASSWORD` 环境变量 → 交互式输入。推荐用后两者，避免密码留在命令行历史/`ps` 中。
+
+- 密码以 Fernet 加密（AES-128-CBC + HMAC-SHA256）保存，master key 独立存放于 `db/password/.master_key`。
+- 密码文件与 master key 文件权限 `0o600`，密码目录权限 `0o700`，仅属主可读写。
+- 写入采用原子重命名；旧版本密码条目仍可读取（兼容迁移）。
+
+密码保存后，`batch_run` 和 GUI 可免密执行 SSH（自动读取加密密码）。也可以临时通过环境变量提供密码（优先级高于加密存储）：
+
+```bash
+BATCH_RUN_PASSWORD='***' batch_run -G ALL -c 'uptime'
+```
 
 ### 6.2 切换用户
 
@@ -299,15 +309,15 @@ python3 install.py
 |------|------|
 | `host_list` | 主机清单文件路径 |
 | `db_path` | 数据库根目录 |
-| `default_ssh_command` | SSH 命令模板 |
+| `default_ssh_command` | SSH 命令模板，默认 `StrictHostKeyChecking=accept-new` |
 | `serial_timeout` | 串行模式超时（秒） |
-| `parallel_timeout` | 并行模式超时（秒） |
-| `fuzzy_match` | 是否支持主机名模糊匹配 |
-| `illegal_command_list` | 禁止执行的命令列表 |
+| `parallel_timeout` | 并行模式超时（秒），默认 20 |
+| `illegal_command_list` | 禁止执行的命令列表（字面精确匹配，另内置破坏性命令模式拦截） |
+| `log_retention_days` | 日志保留天数 |
 | `ai_api_base_url` | AI API 地址 |
 | `ai_api_key` | AI API 密钥 |
 | `ai_model_name` | AI 模型名称 |
-| `ai_dangerous_commands` | AI 执行前需确认的危险命令列表 |
+| `ai_dangerous_commands` | AI 执行前需确认的危险命令列表（另会检测命令替换/编码垫片/解释器 -c 等绕过构造） |
 
 ---
 
@@ -374,7 +384,7 @@ $BATCH_RUN_INSTALL_PATH/bin/batch_run -G GPU_SERVER -L
 
 ### Q: 并行数设多少合适？
 - 一般 128 即可覆盖大部分场景
-- 设为 0 表示全部并行（主机多时可能超出系统 fd 限制）
+- 并行度上限为 `config.max_parallel`（默认 512），`-P 0`（无限并行）已被禁止
 - 串行（默认 -P 1）适合需要逐一确认的场景
 
 ### Q: 输出太多看不过来？

@@ -311,14 +311,25 @@ def is_ip(input_string):
         return False
 
 
+def wildcard_to_regex(pattern):
+    """
+    Convert a shell-style wildcard pattern (only '*' is special) into a compiled
+    anchored regex. All other regex metacharacters in the pattern are escaped,
+    so a group/host name like 'qa(v2)' or an IP like '10.5.5.5' is matched
+    literally except for '*'.
+    """
+    escaped = re.escape(pattern).replace(r'\*', '.*')
+    return re.compile('^' + escaped + '$')
+
+
 def get_login_user():
     """
     Get login user with os.getlogin().
     If crash, try to get login user with tty and last command.
     If last command also does not work, set current user as login user.
     """
-    user = os.popen('whoami').read().strip()
-    login_user = os.popen('who am i').read().strip()
+    user = subprocess.run(['whoami'], capture_output=True, text=True).stdout.strip()
+    login_user = subprocess.run(['who', 'am', 'i'], capture_output=True, text=True).stdout.strip()
 
     if login_user:
         login_user = re.sub(r' .*', '', login_user)
@@ -432,12 +443,15 @@ class ParseHostList():
                         bprint('Empty group setting for below line.', color='red', display_method=1, indent=9)
                         bprint(line, color='red', display_method=1, indent=9)
                         sys.exit(1)
-                elif re.match(r'^\s*([0-9\.]+)\s*(ssh_host=(\S+))?\s*(ssh_port=(\d+))?\s*(#.*)?\s*$', line):
+                elif re.match(r'^\s*([0-9\.]+)\s*((?:ssh_host=\S+|ssh_port=\d+)\s*){0,2}(#.*)?\s*$', line):
                     # Get host_ip/host_name/ssh_port setting.
-                    my_match = re.match(r'^\s*([0-9\.]+)\s*(ssh_host=(\S+))?\s*(ssh_port=(\d+))?\s*(#.*)?\s*$', line)
+                    # ssh_host and ssh_port may appear in either order.
+                    my_match = re.match(r'^\s*([0-9\.]+)\b', line)
                     host_ip = my_match.group(1)
-                    host_name = my_match.group(3)
-                    ssh_port = my_match.group(5)
+                    host_name_match = re.search(r'ssh_host=(\S+)', line)
+                    ssh_port_match = re.search(r'ssh_port=(\d+)', line)
+                    host_name = host_name_match.group(1) if host_name_match else None
+                    ssh_port = ssh_port_match.group(1) if ssh_port_match else None
 
                     # Make sure it is a valid ip.
                     if not is_ip(host_ip):
@@ -587,10 +601,10 @@ class ParseHostList():
                             find_mark = False
 
                             if re.search(r'\*', exclude_item):
-                                exclude_item = re.sub(r'\*', r'.*', exclude_item)
+                                exclude_item_re = wildcard_to_regex(exclude_item)
 
                                 for known_group in self.host_list_dic.keys():
-                                    if re.match(r'^' + str(exclude_item) + '$', known_group):
+                                    if exclude_item_re.match(known_group):
                                         find_mark = True
                                         self.host_list_dic[group].setdefault('exclude_groups', [])
 
@@ -625,10 +639,10 @@ class ParseHostList():
                                     if (sub_group != group) and (sub_group not in self.host_list_dic[group]['sub_groups']):
                                         self.host_list_dic[group]['sub_groups'].append(sub_group)
                             elif re.search(r'\*', sub_group):
-                                sub_group = re.sub(r'\*', r'.*', sub_group)
+                                sub_group_re = wildcard_to_regex(sub_group)
 
                                 for known_group in self.host_list_dic.keys():
-                                    if re.match(r'^' + str(sub_group) + '$', known_group):
+                                    if sub_group_re.match(known_group):
                                         find_mark = True
                                         self.host_list_dic[group].setdefault('sub_groups', [])
 
@@ -648,11 +662,24 @@ class ParseHostList():
             group_hosts_dic = self.get_group_hosts_dic(group)
             self.expanded_host_list_dic[group] = group_hosts_dic
 
-    def get_group_hosts_dic(self, group, parent_group=''):
+    def get_group_hosts_dic(self, group, ancestry=None):
         """
         Expand group setting to host_ip setting.
+
+        ``ancestry`` is the chain of groups leading to ``group`` in the current
+        recursion path. Any group reappearing in its own ancestry is a cycle.
+        Using the full ancestry (not just the immediate parent) catches cycles of
+        length >= 3 (A -> B -> C -> A) which the old parent-only check missed.
         """
+        if ancestry is None:
+            ancestry = []
+
         group_hosts_dic = {}
+
+        if group in ancestry:
+            chain = ' -> '.join(ancestry + [group])
+            bprint('Group analysis forms a dead loop, ' + chain + '.', level='Error')
+            sys.exit(1)
 
         if group in self.host_list_dic:
             # Save group "hosts" into group_hosts_dic.
@@ -665,11 +692,12 @@ class ParseHostList():
                     if ('exclude_groups' in self.host_list_dic[group]) and (sub_group in self.host_list_dic[group]['exclude_groups']):
                         continue
 
-                    if sub_group == parent_group:
-                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(parent_group) + '.', level='Error')
+                    if sub_group in ancestry or sub_group == group:
+                        chain = ' -> '.join(ancestry + [group, sub_group])
+                        bprint('Group analysis forms a dead loop, ' + chain + '.', level='Error')
                         sys.exit(1)
 
-                    sub_group_hosts_dic = self.get_group_hosts_dic(sub_group, parent_group=group)
+                    sub_group_hosts_dic = self.get_group_hosts_dic(sub_group, ancestry=ancestry + [group])
 
                     for host_ip in sub_group_hosts_dic.keys():
                         if host_ip in group_hosts_dic:
@@ -696,11 +724,12 @@ class ParseHostList():
             # Exclude group "exclude_groups" from group_hosts_dic
             if 'exclude_groups' in self.host_list_dic[group]:
                 for exclude_group in self.host_list_dic[group]['exclude_groups']:
-                    if exclude_group == parent_group:
-                        bprint('Group analysis forms a dead loop, ' + str(parent_group) + ' -> ' + str(group) + ' -> ' + str(exclude_group) + '.', level='Error')
+                    if exclude_group in ancestry or exclude_group == group:
+                        chain = ' -> '.join(ancestry + [group, exclude_group])
+                        bprint('Group analysis forms a dead loop, ' + chain + '.', level='Error')
                         sys.exit(1)
 
-                    exclude_group_hosts_dic = self.get_group_hosts_dic(exclude_group, parent_group=group)
+                    exclude_group_hosts_dic = self.get_group_hosts_dic(exclude_group, ancestry=ancestry + [group])
 
                     for host_ip in exclude_group_hosts_dic.keys():
                         if host_ip in group_hosts_dic:
@@ -794,10 +823,10 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
                 find_mark = False
 
                 if re.search(r'\*', excluded_group):
-                    excluded_group = re.sub(r'\*', r'.*', excluded_group)
+                    excluded_group_re = wildcard_to_regex(excluded_group)
 
                     for known_group in host_list_class.host_list_dic.keys():
-                        if re.match(r'^' + str(excluded_group) + '$', known_group):
+                        if excluded_group_re.match(known_group):
                             find_mark = True
                             excluded_group_list.append(known_group)
 
@@ -812,10 +841,10 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
                 find_mark = False
 
                 if re.search(r'\*', group):
-                    group = re.sub(r'\*', r'.*', group)
+                    group_re = wildcard_to_regex(group)
 
                     for known_group in host_list_class.host_list_dic.keys():
-                        if re.match(r'^' + str(group) + '$', known_group):
+                        if group_re.match(known_group):
                             find_mark = True
                             expected_group_list.append(known_group)
 
@@ -843,9 +872,10 @@ def parse_specified_groups(specified_group_list, host_list_class=None, specified
             if host_ip in excluded_host_list:
                 continue
             elif 'host_name' in host_list_class.host_ip_dic[host_ip]:
-                for host_name in host_list_class.host_ip_dic[host_ip]['host_name']:
-                    if host_name in excluded_host_list:
-                        continue
+                # Skip this host_ip entirely if any of its host_names is excluded.
+                # (The previous "continue" only broke the inner loop, leaving the host included.)
+                if any(host_name in excluded_host_list for host_name in host_list_class.host_ip_dic[host_ip]['host_name']):
+                    continue
 
             if not check_repetitiveness(host_ip, specified_host_dic):
                 specified_host_dic[host_ip] = {}
@@ -997,12 +1027,12 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
                 fuzzy_find_mark = False
 
                 if re.search(r'\*', host):
-                    host = re.sub(r'\*', r'.*', host)
+                    host_re = wildcard_to_regex(host)
 
                     # fuzzy matching host_ip.
                     # specified_host_dic = {<host_ip>: {'host_name': [<host_name>,], 'ssh_port': <ssh_port>, 'groups': [<group>,]}}
                     for host_ip in host_list_class.host_ip_dic.keys():
-                        if re.match(r'^' + str(host) + '$', host_ip):
+                        if host_re.match(host_ip):
                             if not check_repetitiveness(host_ip, specified_host_dic):
                                 print('[FUZZY MATCH] ' + str(host) + ' -> ' + str(host_ip))
                                 fuzzy_find_mark = True
@@ -1030,7 +1060,7 @@ def parse_specified_hosts(specified_host_list, host_list_class=None, specified_h
                     # fuzzy matching host_name.
                     # specified_host_dic = {<host_ip>: {'host_name': [<host_name>,], 'ssh_port': <ssh_port>, 'groups': [<group>,]}}
                     for host_name in host_list_class.host_name_dic.keys():
-                        if re.match(r'^' + str(host) + '$', host_name):
+                        if host_re.match(host_name):
                             for host_ip in host_list_class.host_name_dic[host_name]:
                                 if not check_repetitiveness(host_ip, specified_host_dic):
                                     print('[FUZZY MATCH] ' + str(host) + ' -> ' + str(host_name) + ' -> ' + str(host_ip))
@@ -1114,7 +1144,181 @@ def write_csv(csv_file, content_dic):
 
 def read_csv(csv_file):
     """
-    Read csv and return a dict.
+    Read csv and return a dict (orient='list': {title: [v1, v2, ...]}),
+    matching the input format expected by write_csv.
     """
     df = pandas.read_csv(csv_file)
-    return df.to_dict()
+    return df.to_dict(orient='list')
+
+
+# ----------------------------------------------------------------------
+# Safe expression evaluator (replaces eval() on user-supplied select strings)
+# ----------------------------------------------------------------------
+import ast as _ast
+import operator as _operator
+
+_SAFE_BINOPS = {
+    _ast.Add: _operator.add, _ast.Sub: _operator.sub, _ast.Mult: _operator.mul,
+    _ast.Div: _operator.truediv, _ast.FloorDiv: _operator.floordiv, _ast.Mod: _operator.mod,
+    _ast.Pow: _operator.pow,
+}
+_SAFE_CMPOPS = {
+    _ast.Eq: _operator.eq, _ast.NotEq: _operator.ne, _ast.Lt: _operator.lt,
+    _ast.LtE: _operator.le, _ast.Gt: _operator.gt, _ast.GtE: _operator.ge,
+    _ast.In: lambda a, b: a in b, _ast.NotIn: lambda a, b: a not in b,
+}
+_SAFE_UNARY = {_ast.UAdd: _operator.pos, _ast.USub: _operator.neg, _ast.Not: _operator.not_}
+
+# Whitelisted built-in functions (callable only by direct name, no attribute access).
+_SAFE_FUNCS = {
+    'len': len, 'int': int, 'float': float, 'str': str, 'bool': bool,
+    'abs': abs, 'min': min, 'max': max, 'round': round,
+    'upper': lambda x: x.upper() if isinstance(x, str) else str(x).upper(),
+    'lower': lambda x: x.lower() if isinstance(x, str) else str(x).lower(),
+}
+
+
+class SafeEvalError(Exception):
+    pass
+
+
+class _SafeEvalVisitor(_ast.NodeVisitor):
+    """
+    Evaluate a restricted Python expression. Names are resolved against the
+    provided mapping. Disallows attribute access, subscript, calls, imports,
+    comprehensions and any name beginning with an underscore (blocks
+    __builtins__/dunder escapes).
+    """
+
+    def __init__(self, names):
+        self.names = names
+
+    def visit_Expression(self, node):
+        return self.visit(node.body)
+
+    def visit_Constant(self, node):
+        return node.value
+
+    def visit_Name(self, node):
+        if not isinstance(node.ctx, _ast.Load):
+            raise SafeEvalError('disallowed name context')
+
+        name = node.id
+
+        if name.startswith('_'):
+            raise SafeEvalError('access to "%s" is not allowed' % name)
+
+        if name not in self.names:
+            raise SafeEvalError('unknown name "%s"' % name)
+
+        return self.names[name]
+
+    def visit_BoolOp(self, node):
+        values = [self.visit(v) for v in node.values]
+
+        if isinstance(node.op, _ast.And):
+            result = True
+
+            for v in values:
+                result = result and v
+
+            return result
+        else:
+            result = False
+
+            for v in values:
+                result = result or v
+
+            return result
+
+    def visit_UnaryOp(self, node):
+        op = _SAFE_UNARY.get(type(node.op))
+
+        if op is None:
+            raise SafeEvalError('disallowed unary op')
+
+        return op(self.visit(node.operand))
+
+    def visit_BinOp(self, node):
+        op = _SAFE_BINOPS.get(type(node.op))
+
+        if op is None:
+            raise SafeEvalError('disallowed binary op')
+
+        return op(self.visit(node.left), self.visit(node.right))
+
+    def visit_Compare(self, node):
+        left = self.visit(node.left)
+        result = True
+
+        for op, comparator in zip(node.ops, node.comparators):
+            cmp = _SAFE_CMPOPS.get(type(op))
+
+            if cmp is None:
+                raise SafeEvalError('disallowed comparison op')
+
+            right = self.visit(comparator)
+            result = result and cmp(left, right)
+            left = right
+
+        return result
+
+    def visit_List(self, node):
+        return [self.visit(e) for e in node.elts]
+
+    def visit_Tuple(self, node):
+        return tuple(self.visit(e) for e in node.elts)
+
+    def visit_Set(self, node):
+        return set(self.visit(e) for e in node.elts)
+
+    def visit_Call(self, node):
+        # Only direct calls to whitelisted function names: func(...) where func is a Name.
+        # Disallows calling attributes (x.method()), results of calls (f()(x)), etc.
+        if not isinstance(node.func, _ast.Name):
+            raise SafeEvalError('only direct function calls are allowed')
+
+        func_name = node.func.id
+
+        if func_name not in _SAFE_FUNCS:
+            raise SafeEvalError('function "%s" is not allowed' % func_name)
+
+        if node.keywords:
+            raise SafeEvalError('keyword arguments are not allowed')
+
+        args = [self.visit(a) for a in node.args]
+
+        try:
+            return _SAFE_FUNCS[func_name](*args)
+        except Exception as e:
+            raise SafeEvalError('function "%s" failed: %s' % (func_name, e))
+
+    def visit_Subscript(self, node):
+        # Allow indexing and slicing on str/list/tuple/dict values, not on names directly.
+        value = self.visit(node.value)
+
+        if isinstance(node.slice, _ast.Slice):
+            lower = self.visit(node.slice.lower) if node.slice.lower is not None else None
+            upper = self.visit(node.slice.upper) if node.slice.upper is not None else None
+            step = self.visit(node.slice.step) if node.slice.step is not None else None
+            return value[lower:upper:step]
+
+        index = self.visit(node.slice)
+        return value[index]
+
+    def generic_visit(self, node):
+        raise SafeEvalError('disallowed expression element: %s' % type(node).__name__)
+
+
+def safe_eval_expr(expression, names):
+    """
+    Safely evaluate a boolean/arithmetic expression against the ``names`` dict.
+
+    Returns the evaluated value. Raises SafeEvalError on any disallowed construct.
+    Example: safe_eval_expr('load > 4 and cpu_thread < 16', {'load': 8, 'cpu_thread': 8}) -> True
+    """
+    if not isinstance(expression, str) or not expression.strip():
+        raise SafeEvalError('empty expression')
+
+    tree = _ast.parse(expression, mode='eval')
+    return _SafeEvalVisitor(names).visit(tree)

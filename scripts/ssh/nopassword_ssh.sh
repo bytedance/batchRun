@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run this script only if the /home direcotry is a shared direcotry.
+# Run this script only if the /home directory is a shared directory.
 
 cd ~/.ssh
 rm -f id_rsa id_rsa.pub

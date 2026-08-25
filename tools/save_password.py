@@ -22,12 +22,18 @@ os.environ['PYTHONUNBUFFERED'] = '1'
 def read_args():
     """
     Read in arguments.
+
+    Password is resolved in priority order:
+      1. -p/--password (discouraged: visible in argv/ps/shell history);
+      2. the BATCH_RUN_PASSWORD environment variable;
+      3. an interactive getpass() prompt (preferred for manual use).
     """
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-p', '--password',
-                        required=True,
-                        help='Specify user password.')
+                        default='',
+                        help='Specify user password. Avoid passing passwords on the command line; '
+                             'prefer the BATCH_RUN_PASSWORD env var or the interactive prompt.')
     parser.add_argument('-H', '--host',
                         default='default',
                         help='Specify the host which user password works on, default is "default".')
@@ -45,12 +51,26 @@ def read_args():
     if not os.path.exists(password_dir_path):
         try:
             os.makedirs(password_dir_path)
-            os.chmod(password_dir_path, 0o1777)
+            os.chmod(password_dir_path, 0o700)
         except Exception as error:
             print('*Error*: Failed on creating password directory "' + str(password_dir_path) + '", ' + str(error))
             sys.exit(1)
 
-    return (args.password, args.host, args.output_file)
+    # Resolve password without leaking it through argv/ps where possible.
+    password = args.password or os.environ.get('BATCH_RUN_PASSWORD', '')
+
+    if not password:
+        try:
+            password = getpass.getpass('Please input password for host "' + str(args.host) + '": ')
+        except Exception as error:
+            print('*Error*: Failed on reading password interactively: ' + str(error))
+            sys.exit(1)
+
+    if not password:
+        print('*Error*: Empty password, nothing to save.')
+        sys.exit(1)
+
+    return (password, args.host, args.output_file)
 
 
 ################

@@ -11,6 +11,7 @@ import sys
 import copy
 import json
 import math
+import shlex
 import time
 import socket
 import getpass
@@ -22,7 +23,7 @@ import threading
 import subprocess
 
 from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QAction, qApp, QTabWidget, QFrame, QGridLayout, QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox, QLineEdit, QHeaderView, QFileDialog, QTextEdit, QTreeWidget, QTreeWidgetItem, QDateEdit, QSplitter, QComboBox, QMenu, QSizePolicy, QAbstractItemView, QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem, QGraphicsItem, QToolTip, QVBoxLayout, QHBoxLayout, QProgressDialog
-from PyQt5.QtGui import QIcon, QBrush, QFont, QColor, QPainter, QPen, QPixmap, QTextLength, QTextTableFormat, QTextCharFormat, QTextBlockFormat, QTextImageFormat, QPainterPath
+from PyQt5.QtGui import QIcon, QBrush, QFont, QColor, QPainter, QPen, QPixmap, QTextLength, QTextTableFormat, QTextCharFormat, QTextBlockFormat, QTextImageFormat, QPainterPath, QTextOption
 from PyQt5.QtCore import Qt, QThread, QProcess, QDate, QPointF, QRect, QTimer, QUrl, QEvent, pyqtSignal
 
 sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/config')
@@ -36,8 +37,8 @@ import common_ai_log
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 CURRENT_USER = getpass.getuser()
-VERSION = 'V2.4'
-VERSION_DATE = '2026.06.14'
+VERSION = 'V2.5'
+VERSION_DATE = '2026.08.21'
 
 
 class LogDataReadyEvent(QEvent):
@@ -74,6 +75,57 @@ def _ip_sort_key(ip):
         return tuple(int(o) for o in ip.split('.'))
     except (ValueError, AttributeError):
         return (0, 0, 0, 0)
+
+
+# First numeric substring (unsigned, with optional decimals), used to give
+# "mixed" cell values like "100%" or "1.23 ms" a numeric sort order instead of
+# the lexicographic "100%" < "20%". A leading-sign variant would mis-read the
+# hyphen in "worker-node-7" as -7, so we match unsigned numbers only -- table
+# cells in this tool are never negative (cpu idle, rtt, port, percent ...).
+_NUM_RE = re.compile(r'\d+(?:\.\d+)?')
+
+
+def _sortable_key(text):
+    """Comparison key for a table cell string.
+
+    Order of preference (the leading int tags types so different kinds never
+    raise; within a column the kind is usually homogeneous):
+      1. IPv4 address  -> (1, octets, ...)
+      2. has a number  -> (2, (), float, text)
+      3. plain text    -> (3, (), 0.0, text)
+    This makes '10.19.1.2' sort after '10.19.1.1', '100%' after '20%', and
+    '1.23 ms' after '10 ms' numerically, while host names still sort as text."""
+    if text is None:
+        return (0, (), 0.0, '')
+
+    s = str(text).strip()
+    parts = s.split('.')
+
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        return (1, tuple(int(p) for p in parts), 0.0, '')
+
+    match = _NUM_RE.search(s)
+
+    if match:
+        return (2, (), float(match.group()), s)
+
+    return (3, (), 0.0, s)
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that compares by IP-then-number-then-text instead of
+    raw string. Use it for any string column that may contain IPs or numbers
+    (host_ip, ssh_port, "100%", "1.23 ms", ...) so clicking the header sorts
+    them correctly. Numeric columns already use setData(Qt.DisplayRole, int)
+    and keep the default item."""
+    def __lt__(self, other):
+        a = self.text()
+        b = other.text() if other is not None else ''
+
+        try:
+            return _sortable_key(a) < _sortable_key(b)
+        except Exception:
+            return a < b
 
 
 class IPRectItem(QGraphicsRectItem):
@@ -167,6 +219,7 @@ class IPRectItem(QGraphicsRectItem):
                 lines.append('Swap: ' + swap)
 
             QToolTip.showText(event.screenPos(), '\n'.join(lines), None, QRect(), 8000)
+
         super().mousePressEvent(event)
 
 
@@ -265,7 +318,6 @@ class NetworkRectItem(QGraphicsRectItem):
                         and new_pos.x() + my_rect.width() + min_gap > s_pos.x()
                         and new_pos.y() < s_pos.y() + s_rect.height() + min_gap
                         and new_pos.y() + my_rect.height() + min_gap > s_pos.y()):
-
                     push_right = (s_pos.x() + s_rect.width() + min_gap) - new_pos.x()
                     push_left = (new_pos.x() + my_rect.width() + min_gap) - s_pos.x()
                     push_down = (s_pos.y() + s_rect.height() + min_gap) - new_pos.y()
@@ -374,6 +426,7 @@ class ZoneRectItem(QGraphicsRectItem):
                 break
 
             new_pos = best_push
+
         return new_pos
 
     def recalcBounds(self):
@@ -430,8 +483,10 @@ class ZoneRectItem(QGraphicsRectItem):
     def _resolveZoneOverlaps(self):
         """Push neighboring zones away if this zone's expansion causes overlap."""
         scene = self.scene()
+
         if not scene:
             return
+
         my_rect = self.rect()
         my_pos = self.pos()
         min_gap = 15
@@ -447,7 +502,6 @@ class ZoneRectItem(QGraphicsRectItem):
                     and my_pos.x() + my_rect.width() + min_gap > s_pos.x()
                     and my_pos.y() < s_pos.y() + s_rect.height() + min_gap
                     and my_pos.y() + my_rect.height() + min_gap > s_pos.y()):
-
                 push_right = (my_pos.x() + my_rect.width() + min_gap) - s_pos.x()
                 push_down = (my_pos.y() + my_rect.height() + min_gap) - s_pos.y()
                 push_left = (s_pos.x() + s_rect.width() + min_gap) - my_pos.x()
@@ -539,8 +593,12 @@ class MainWindow(QMainWindow):
         else:
             common.bprint('Loading network scan file "' + str(network_scan_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(network_scan_file, 'r') as NSF:
-                self.network_scan_dic = json.loads(NSF.read())
+            try:
+                with open(network_scan_file, 'r') as NSF:
+                    self.network_scan_dic = json.loads(NSF.read())
+            except Exception as error:
+                self.network_scan_dic = {}
+                common.bprint('Failed to load network scan file "' + str(network_scan_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         # self.host_asset_dic: get asset information.
         self.host_asset_dic = {}
@@ -551,8 +609,12 @@ class MainWindow(QMainWindow):
         else:
             common.bprint('Loading host asset file "' + str(host_asset_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(host_asset_file, 'r') as HAF:
-                self.host_asset_dic = json.loads(HAF.read())
+            try:
+                with open(host_asset_file, 'r') as HAF:
+                    self.host_asset_dic = json.loads(HAF.read())
+            except Exception as error:
+                self.host_asset_dic = {}
+                common.bprint('Failed to load host asset file "' + str(host_asset_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         # self.host_queue_dic: get host scheduler/cluster/queue information from host_queue.json.
         self.host_queue_dic = {}
@@ -563,8 +625,12 @@ class MainWindow(QMainWindow):
         else:
             common.bprint('Loading host queue file "' + str(host_queue_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(host_queue_file, 'r') as HQF:
-                self.host_queue_dic = json.loads(HQF.read())
+            try:
+                with open(host_queue_file, 'r') as HQF:
+                    self.host_queue_dic = json.loads(HQF.read())
+            except Exception as error:
+                self.host_queue_dic = {}
+                common.bprint('Failed to load host queue file "' + str(host_queue_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         # self.scheduler_cluster_queue_dic: get scheduler -> cluster -> queue relationship from self.host_queue_dic.
         common.bprint('Collecting host scheduler/cluster/queue relationship ...', date_format='%Y-%m-%d %H:%M:%S')
@@ -590,8 +656,12 @@ class MainWindow(QMainWindow):
         else:
             common.bprint('Loading host info file "' + str(host_info_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(host_info_file, 'r') as HIF:
-                self.host_info_dic = json.loads(HIF.read())
+            try:
+                with open(host_info_file, 'r') as HIF:
+                    self.host_info_dic = json.loads(HIF.read())
+            except Exception as error:
+                self.host_info_dic = {}
+                common.bprint('Failed to load host info file "' + str(host_info_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         # self.run_tab_table_dic: get selected host_ip(s)/host_name(s) from GROUP or HOST tab.
         self.run_tab_table_dic = {}
@@ -816,66 +886,96 @@ class MainWindow(QMainWindow):
         help_menu.addAction(version_action)
         help_menu.addAction(about_action)
 
+    def _run_tool_command(self, message_text, command, on_done=None):
+        """
+        Run a tool command in a background thread (non-blocking) and invoke
+        `on_done` on the main thread after it finishes. Keeps references so the
+        worker/message threads are not garbage-collected while running.
+        """
+        if not getattr(self, '_tool_threads', None):
+            self._tool_threads = []
+
+        my_show_message = ShowMessage('Info', message_text)
+        my_show_message.start()
+
+        tool_thread = ToolCommandThread(command)
+
+        def _on_finished(_command):
+            try:
+                my_show_message.stop()
+            except Exception:
+                pass
+
+            try:
+                if on_done:
+                    on_done()
+            except Exception as error:
+                common.bprint(f'Failed on tool post-processing: {error}', level='Error')
+
+            try:
+                self._tool_threads.remove(tool_thread)
+            except ValueError:
+                pass
+
+        tool_thread.finished_signal.connect(_on_finished)
+        self._tool_threads.append(tool_thread)
+        tool_thread.start()
+
     def switch_etc_hosts(self):
         """
         Call the tools/switch_cetc_hosts tool to convert the hosts file to the host.list file of batchRun.
         """
         if config.switch_etc_hosts_command:
-            my_show_message = ShowMessage('Info', 'Switching etc hosts ...')
-            my_show_message.start()
-            os.system(config.switch_etc_hosts_command)
-            self.init_var()
-            self.gen_host_tab()
-            self.gen_run_tab()
-            my_show_message.terminate()
+            def _done():
+                self.init_var()
+                self.gen_host_tab()
+                self.gen_run_tab()
+
+            self._run_tool_command('Switching etc hosts ...', config.switch_etc_hosts_command, _done)
 
     def network_scan(self):
         """
         Call the tools/network_scan tool to scan specified network.
         """
         if config.network_scan_command:
-            my_show_message = ShowMessage('Info', 'Scaning network ...')
-            my_show_message.start()
-            os.system(config.network_scan_command)
-            self.init_var()
-            self._diagram_ever_generated = False
-            self.gen_network_tab()
-            my_show_message.terminate()
+            def _done():
+                self.init_var()
+                self._diagram_ever_generated = False
+                self.gen_network_tab()
+
+            self._run_tool_command('Scaning network ...', config.network_scan_command, _done)
 
     def sample_host_info(self):
         """
         Call the tools/sample_host_info tool to sample host information.
         """
         if config.sample_host_info_command:
-            my_show_message = ShowMessage('Info', 'Sampling host info ...')
-            my_show_message.start()
-            os.system(config.sample_host_info_command)
-            self.init_var()
-            self.gen_host_tab()
-            my_show_message.terminate()
+            def _done():
+                self.init_var()
+                self.gen_host_tab()
+
+            self._run_tool_command('Sampling host info ...', config.sample_host_info_command, _done)
 
     def sample_host_queue(self):
         """
         Call the tools/sample_host_queue tool to sample scheduler/cluster/queue information.
         """
         if config.sample_host_queue_command:
-            my_show_message = ShowMessage('Info', 'Sampling host queue info ...')
-            my_show_message.start()
-            os.system(config.sample_host_queue_command)
-            self.init_var()
-            my_show_message.terminate()
+            def _done():
+                self.init_var()
+
+            self._run_tool_command('Sampling host queue info ...', config.sample_host_queue_command, _done)
 
     def sample_host_stat(self):
         """
         Call the tools/sample_host_stat tool to sample host stat information.
         """
         if config.sample_host_stat_command:
-            my_show_message = ShowMessage('Info', 'Sampling host stat info ...')
-            my_show_message.start()
-            os.system(config.sample_host_stat_command)
-            self.init_var()
-            self.gen_stat_tab()
-            my_show_message.terminate()
+            def _done():
+                self.init_var()
+                self.gen_stat_tab()
+
+            self._run_tool_command('Sampling host stat info ...', config.sample_host_stat_command, _done)
 
     def show_version(self):
         """
@@ -888,6 +988,7 @@ class MainWindow(QMainWindow):
         Show batchRun about information.
         """
         about_message = """
+
 Thanks for downloading batchRun.
 
 batchRun is a batch opration, asset management, and information collection tool applied to HPC systems.
@@ -1161,6 +1262,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.network_tab_group_combo.clear()
 
         group_set = set()
+
         for zone in self.network_scan_dic.keys():
             for network in self.network_scan_dic[zone].keys():
                 for host_ip in self.network_scan_dic[zone][network].keys():
@@ -1183,7 +1285,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         # self.network_tab_table
         self.network_tab_table.setShowGrid(True)
-        self.network_tab_table.setSortingEnabled(True)
+        self.network_tab_table.setSortingEnabled(False)
         self.network_tab_table.setColumnCount(0)
         self.network_tab_table_title_list = ['zone', 'network', 'host_ip', 'host_name', 'groups', 'packet', 'received', 'packet_loss', 'rtt_avg']
         self.network_tab_table.setColumnCount(len(self.network_tab_table_title_list))
@@ -1225,17 +1327,17 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                     # Fill "zone" item.
                     j = 0
-                    item = QTableWidgetItem(zone)
+                    item = SortableTableWidgetItem(zone)
                     self.network_tab_table.setItem(i, j, item)
 
                     # Fill "network" item.
                     j += 1
-                    item = QTableWidgetItem(network)
+                    item = SortableTableWidgetItem(network)
                     self.network_tab_table.setItem(i, j, item)
 
                     # Fill "host_ip" item.
                     j += 1
-                    item = QTableWidgetItem(host_ip)
+                    item = SortableTableWidgetItem(host_ip)
 
                     if not host_name:
                         item.setBackground(QBrush(Qt.red))
@@ -1244,7 +1346,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                     # Fill "host_name" item.
                     j += 1
-                    item = QTableWidgetItem(host_name)
+                    item = SortableTableWidgetItem(host_name)
 
                     if not host_name:
                         item.setBackground(QBrush(Qt.red))
@@ -1253,7 +1355,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                     # Fill "groups" item.
                     j += 1
-                    item = QTableWidgetItem(groups)
+                    item = SortableTableWidgetItem(groups)
 
                     if not host_name:
                         item.setBackground(QBrush(Qt.red))
@@ -1282,7 +1384,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                     # Fill "packet_loss" item.
                     j += 1
-                    item = QTableWidgetItem(packet_loss)
+                    item = SortableTableWidgetItem(packet_loss)
 
                     if not host_name:
                         item.setBackground(QBrush(Qt.red))
@@ -1291,12 +1393,14 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                     # Fill "rtt_avg" item.
                     j += 1
-                    item = QTableWidgetItem(rtt_avg)
+                    item = SortableTableWidgetItem(rtt_avg)
 
                     if not host_name:
                         item.setBackground(QBrush(Qt.red))
 
                     self.network_tab_table.setItem(i, j, item)
+
+        self.network_tab_table.setSortingEnabled(True)
 
     def collect_network_tab_table_info(self):
         """
@@ -1516,11 +1620,13 @@ Please be free to contact liyanqing1987@163.com if any question."""
                             info['host_name'] = '  '.join(self.host_list_class.host_ip_dic[ip]['host_name'])
                         else:
                             info['host_name'] = ''
+
                     if 'groups' not in info:
                         if ip in self.host_group_relationship_dic:
                             info['groups'] = '  '.join(self.host_group_relationship_dic[ip])
                         else:
                             info['groups'] = ''
+
                     # Enrich with host_info data for tooltip
                     if ip in self.host_info_dic:
                         for k in ('server_type', 'os', 'cpu_architecture', 'cpu_thread',
@@ -1586,6 +1692,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             pen = QPen(QColor(255, 255, 0), 4)
         else:
             pen = QPen(QColor(255, 255, 0), 3)
+
         graphics_item.setPen(pen)
         graphics_item.setZValue(100)
 
@@ -1600,7 +1707,9 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 gitem.setPen(QPen(QColor(140, 160, 200), 2))
             else:
                 gitem.setPen(QPen(QColor(150, 150, 150), 1))
+
             gitem.setZValue(0)
+
         self.network_tab_highlighted_items = []
 
     def _on_right_tab_changed(self, index):
@@ -1713,7 +1822,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         # self.asset_tab_table
         self.asset_tab_table.setShowGrid(True)
-        self.asset_tab_table.setSortingEnabled(True)
+        self.asset_tab_table.setSortingEnabled(False)
         self.asset_tab_table.setColumnCount(0)
 
         if asset_tab_table_dic:
@@ -1738,12 +1847,12 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_ip" item.
             j = 0
-            item = QTableWidgetItem(host_ip)
+            item = SortableTableWidgetItem(host_ip)
             self.asset_tab_table.setItem(i, j, item)
 
             # Fill "host_name" item.
             j += 1
-            item = QTableWidgetItem(asset_tab_table_dic[host_ip]['host_name'])
+            item = SortableTableWidgetItem(asset_tab_table_dic[host_ip]['host_name'])
 
             if not asset_tab_table_dic[host_ip]['host_name']:
                 item.setBackground(QBrush(Qt.red))
@@ -1752,7 +1861,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "group" item.
             j += 1
-            item = QTableWidgetItem(asset_tab_table_dic[host_ip]['groups'])
+            item = SortableTableWidgetItem(asset_tab_table_dic[host_ip]['groups'])
 
             if not asset_tab_table_dic[host_ip]['groups']:
                 item.setBackground(QBrush(Qt.red))
@@ -1772,12 +1881,14 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 elif not isinstance(item_string, str):
                     item_string = str(item_string)
 
-                item = QTableWidgetItem(item_string)
+                item = SortableTableWidgetItem(item_string)
                 self.asset_tab_table.setItem(i, j, item)
 
         self.asset_tab_table.resizeColumnsToContents()
         header = self.asset_tab_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
+
+        self.asset_tab_table.setSortingEnabled(True)
 
     def collect_asset_tab_table_info(self):
         """
@@ -1793,7 +1904,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         else:
             for host_ip in host_asset_dic.keys():
                 try:
-                    if eval(select_string, {}, host_asset_dic[host_ip]):
+                    if common.safe_eval_expr(select_string, host_asset_dic[host_ip]):
                         asset_tab_table_dic[host_ip] = host_asset_dic[host_ip]
                 except Exception:
                     asset_tab_table_dic = host_asset_dic
@@ -1806,30 +1917,55 @@ Please be free to contact liyanqing1987@163.com if any question."""
     def get_asset_info(self, host_asset_file):
         """
         Parse host_asset.json and return host_asset_dic.
+        Expected format: {host_ip: {field: value, ...}}.
+        Tolerant of malformed files: a non-dict top level or non-dict values are
+        skipped with a warning instead of crashing the GUI.
         """
         host_asset_dic = {}
 
-        if os.path.exists(host_asset_file):
-            common.bprint('Loading host asset file "' + str(host_asset_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
+        if not os.path.exists(host_asset_file):
+            return host_asset_dic
 
+        common.bprint('Loading host asset file "' + str(host_asset_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
+
+        try:
             with open(host_asset_file, 'r') as HAF:
-                host_asset_dic = json.loads(HAF.read())
+                raw_dic = json.loads(HAF.read())
+        except Exception as error:
+            common.bprint('Failed to load host asset file "' + str(host_asset_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+            return host_asset_dic
 
-        for host_ip in host_asset_dic.keys():
+        if not isinstance(raw_dic, dict):
+            common.bprint('Host asset file "' + str(host_asset_file) + '" is not a dict (got ' + type(raw_dic).__name__ + '), expected {host_ip: {field: value}}, skipped.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+            return host_asset_dic
+
+        skipped = 0
+
+        for host_ip, host_info in raw_dic.items():
+            # Each record must be a dict to attach host_ip/host_name/groups.
+            if not isinstance(host_info, dict):
+                skipped += 1
+                continue
+
             # Add "host_ip" under host_asset_dic[host_ip].
-            host_asset_dic[host_ip]['host_ip'] = host_ip
+            host_info['host_ip'] = host_ip
 
             # Add "host_name" under host_asset_dic[host_ip].
             if host_ip in self.host_list_class.host_ip_dic.keys():
-                host_asset_dic[host_ip]['host_name'] = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
+                host_info['host_name'] = '  '.join(self.host_list_class.host_ip_dic[host_ip]['host_name'])
             else:
-                host_asset_dic[host_ip]['host_name'] = ''
+                host_info['host_name'] = ''
 
             # Add "groups" under host_asset_dic[host_ip].
             if host_ip in self.host_group_relationship_dic:
-                host_asset_dic[host_ip]['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
+                host_info['groups'] = '  '.join(self.host_group_relationship_dic[host_ip])
             else:
-                host_asset_dic[host_ip]['groups'] = ''
+                host_info['groups'] = ''
+
+            host_asset_dic[host_ip] = host_info
+
+        if skipped:
+            common.bprint('Skipped ' + str(skipped) + ' non-dict asset record(s) in "' + str(host_asset_file) + '", expected format {host_ip: {field: value}}.', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         return host_asset_dic
 
@@ -2386,7 +2522,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         # self.host_tab_table
         self.host_tab_table.setShowGrid(True)
-        self.host_tab_table.setSortingEnabled(True)
+        self.host_tab_table.setSortingEnabled(False)
         self.host_tab_table.setColumnCount(0)
         self.host_tab_table_title_list = ['host_ip', 'host_name', 'groups', 'server_type', 'os', 'cpu_arch', 'cpu_model', 'cpu_thread', 'thread_per_core', 'cpu_freq (GHz)', 'mem (GB)', 'swap (GB)', 'ssh_port', 'scheduler', 'cluster', 'queues']
         self.host_tab_table.setColumnCount(len(self.host_tab_table_title_list))
@@ -2421,22 +2557,22 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_ip" item.
             j = 0
-            item = QTableWidgetItem(host_ip)
+            item = SortableTableWidgetItem(host_ip)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "host_name" item.
             j += 1
-            item = QTableWidgetItem(host_name)
+            item = SortableTableWidgetItem(host_name)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "group" item.
             j += 1
-            item = QTableWidgetItem(groups)
+            item = SortableTableWidgetItem(groups)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "server_type" item.
             j += 1
-            item = QTableWidgetItem(server_type)
+            item = SortableTableWidgetItem(server_type)
 
             if not server_type:
                 item.setBackground(QBrush(Qt.red))
@@ -2445,7 +2581,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "os" item.
             j += 1
-            item = QTableWidgetItem(os)
+            item = SortableTableWidgetItem(os)
 
             if not os:
                 item.setBackground(QBrush(Qt.red))
@@ -2454,7 +2590,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "cpu_arch" item.
             j += 1
-            item = QTableWidgetItem(cpu_architecture)
+            item = SortableTableWidgetItem(cpu_architecture)
 
             if not cpu_architecture:
                 item.setBackground(QBrush(Qt.red))
@@ -2463,7 +2599,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "cpu_model" item.
             j += 1
-            item = QTableWidgetItem(cpu_model)
+            item = SortableTableWidgetItem(cpu_model)
 
             if not cpu_model:
                 item.setBackground(QBrush(Qt.red))
@@ -2527,12 +2663,12 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "ssh_port" item.
             j += 1
-            item = QTableWidgetItem(ssh_port)
+            item = SortableTableWidgetItem(ssh_port)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "schduler" item.
             j += 1
-            item = QTableWidgetItem(scheduler)
+            item = SortableTableWidgetItem(scheduler)
 
             if scheduler == '_':
                 item.setBackground(QBrush(Qt.red))
@@ -2541,15 +2677,17 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "cluster" item.
             j += 1
-            item = QTableWidgetItem(cluster)
+            item = SortableTableWidgetItem(cluster)
             self.host_tab_table.setItem(i, j, item)
 
             # Fill "queues" item.
             j += 1
-            item = QTableWidgetItem('  '.join(queue_list))
+            item = SortableTableWidgetItem('  '.join(queue_list))
             self.host_tab_table.setItem(i, j, item)
 
         self.host_tab_table.resizeColumnsToContents()
+
+        self.host_tab_table.setSortingEnabled(True)
 
     def collect_host_tab_table_info(self):
         """
@@ -2888,7 +3026,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             for dir_name in time_list:
                 self.stat_tab_time_combo.addItem(dir_name)
 
-            self.stat_tab_time_combo.setCurrentIndex(len(time_list)-1)
+            self.stat_tab_time_combo.setCurrentIndex(len(time_list) - 1)
 
     def gen_stat_tab_table(self, specified_host_ip_list=[]):
         orig_stat_tab_table_dic = self.collect_stat_tab_table_info()
@@ -2904,7 +3042,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
         # self.stat_tab_table
         self.stat_tab_table.setShowGrid(True)
-        self.stat_tab_table.setSortingEnabled(True)
+        self.stat_tab_table.setSortingEnabled(False)
         self.stat_tab_table.setColumnCount(0)
         self.stat_tab_table_title_list = ['host_ip', 'host_name', 'groups', 'up_days', 'users', 'tasks', 'r1m', 'r5m', 'r15m', 'cpu_thread', 'cpu_id', 'cpu_wa', 'mem_total', 'mem_avail', 'swap_total', 'swap_used', 'tmp_total', 'tmp_avail']
         self.stat_tab_table.setColumnCount(len(self.stat_tab_table_title_list))
@@ -2940,12 +3078,12 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "host_ip" item.
             j = 0
-            item = QTableWidgetItem(host_ip)
+            item = SortableTableWidgetItem(host_ip)
             self.stat_tab_table.setItem(i, j, item)
 
             # Fill "host_name" item.
             j += 1
-            item = QTableWidgetItem(stat_tab_table_dic[host_ip]['host_name'])
+            item = SortableTableWidgetItem(stat_tab_table_dic[host_ip]['host_name'])
 
             if not stat_tab_table_dic[host_ip]['host_name']:
                 item.setBackground(QBrush(Qt.red))
@@ -2954,7 +3092,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
             # Fill "group" item.
             j += 1
-            item = QTableWidgetItem(stat_tab_table_dic[host_ip]['groups'])
+            item = SortableTableWidgetItem(stat_tab_table_dic[host_ip]['groups'])
 
             if not stat_tab_table_dic[host_ip]['groups']:
                 item.setBackground(QBrush(Qt.red))
@@ -3069,7 +3207,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             item = QTableWidgetItem()
             item.setData(Qt.DisplayRole, stat_tab_table_dic[host_ip]['mem_avail'])
 
-            if 0 < stat_tab_table_dic[host_ip]['mem_avail'] <= stat_tab_table_dic[host_ip]['mem_total']/10:
+            if 0 < stat_tab_table_dic[host_ip]['mem_avail'] <= stat_tab_table_dic[host_ip]['mem_total'] / 10:
                 item.setBackground(QBrush(QColor(255, 102, 0)))
             elif stat_tab_table_dic[host_ip]['mem_avail'] == 0:
                 item.setBackground(QBrush(Qt.red))
@@ -3091,7 +3229,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             item = QTableWidgetItem()
             item.setData(Qt.DisplayRole, stat_tab_table_dic[host_ip]['swap_used'])
 
-            if (stat_tab_table_dic[host_ip]['swap_total'] > 0) and (stat_tab_table_dic[host_ip]['swap_used'] >= stat_tab_table_dic[host_ip]['swap_total']/10):
+            if (stat_tab_table_dic[host_ip]['swap_total'] > 0) and (stat_tab_table_dic[host_ip]['swap_used'] >= stat_tab_table_dic[host_ip]['swap_total'] / 10):
                 item.setBackground(QBrush(QColor(255, 102, 0)))
 
             self.stat_tab_table.setItem(i, j, item)
@@ -3111,12 +3249,14 @@ Please be free to contact liyanqing1987@163.com if any question."""
             item = QTableWidgetItem()
             item.setData(Qt.DisplayRole, stat_tab_table_dic[host_ip]['tmp_avail'])
 
-            if 0 < stat_tab_table_dic[host_ip]['tmp_avail'] <= stat_tab_table_dic[host_ip]['tmp_total']/10:
+            if 0 < stat_tab_table_dic[host_ip]['tmp_avail'] <= stat_tab_table_dic[host_ip]['tmp_total'] / 10:
                 item.setBackground(QBrush(QColor(255, 102, 0)))
             elif stat_tab_table_dic[host_ip]['tmp_avail'] == 0:
                 item.setBackground(QBrush(Qt.red))
 
             self.stat_tab_table.setItem(i, j, item)
+
+        self.stat_tab_table.setSortingEnabled(True)
 
     def collect_stat_tab_table_info(self):
         """
@@ -3136,7 +3276,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
             else:
                 for host_ip in host_stat_dic.keys():
                     try:
-                        if eval(select_string, {}, host_stat_dic[host_ip]):
+                        if common.safe_eval_expr(select_string, host_stat_dic[host_ip]):
                             stat_tab_table_dic[host_ip] = host_stat_dic[host_ip]
                     except Exception:
                         stat_tab_table_dic = host_stat_dic
@@ -3155,8 +3295,12 @@ Please be free to contact liyanqing1987@163.com if any question."""
         if os.path.exists(host_stat_file):
             common.bprint('Loading host stat file "' + str(host_stat_file) + '" ...', date_format='%Y-%m-%d %H:%M:%S')
 
-            with open(host_stat_file, 'r') as HSF:
-                host_stat_dic = json.loads(HSF.read())
+            try:
+                with open(host_stat_file, 'r') as HSF:
+                    host_stat_dic = json.loads(HSF.read())
+            except Exception as error:
+                host_stat_dic = {}
+                common.bprint('Failed to load host stat file "' + str(host_stat_file) + '": ' + str(error), date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
         for host_ip in host_stat_dic.keys():
             # Add "host_ip" under host_stat_dic[host_ip].
@@ -3258,8 +3402,18 @@ Please be free to contact liyanqing1987@163.com if any question."""
         if item is not None:
             if item.column() == 5:
                 current_row = self.stat_tab_table.currentRow()
-                r1m = float(self.stat_tab_table.item(current_row, 6).text().strip())
-                cpu_thread = int(self.stat_tab_table.item(current_row, 9).text().strip())
+
+                try:
+                    r1m_item = self.stat_tab_table.item(current_row, 6)
+                    cpu_thread_item = self.stat_tab_table.item(current_row, 9)
+
+                    if r1m_item is None or cpu_thread_item is None:
+                        return
+
+                    r1m = float(r1m_item.text().strip())
+                    cpu_thread = int(cpu_thread_item.text().strip())
+                except (ValueError, AttributeError):
+                    return
 
                 if r1m >= cpu_thread:
                     specified_date = self.stat_tab_date_edit.date().toString('yyyyMMdd')
@@ -3450,7 +3604,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
                 # Fill "host_ip" item.
                 j = 0
-                item = QTableWidgetItem(host_ip)
+                item = SortableTableWidgetItem(host_ip)
                 state = self.run_tab_table_dic[host_ip]['state']
                 item.setCheckState(state)
                 self.run_tab_table.setItem(i, j, item)
@@ -3458,19 +3612,19 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 # Fill "host_name" item.
                 j += 1
                 host_name = self.run_tab_table_dic[host_ip]['host_name']
-                item = QTableWidgetItem(host_name)
+                item = SortableTableWidgetItem(host_name)
                 self.run_tab_table.setItem(i, j, item)
 
                 # Fill "groups" item.
                 j += 1
                 groups = self.run_tab_table_dic[host_ip]['groups']
-                item = QTableWidgetItem(groups)
+                item = SortableTableWidgetItem(groups)
                 self.run_tab_table.setItem(i, j, item)
 
                 # Fill "output_message" item.
                 j += 1
                 output_message = self.run_tab_table_dic[host_ip]['output_message']
-                item = QTableWidgetItem(output_message)
+                item = SortableTableWidgetItem(output_message)
 
                 if 'pexpect.exceptions.TIMEOUT' in output_message:
                     item.setForeground(QBrush(QColor(255, 102, 0)))
@@ -3502,7 +3656,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         else:
             for host_ip in self.run_tab_table_dic.keys():
                 try:
-                    if eval(select_string, {}, self.run_tab_table_dic[host_ip]):
+                    if common.safe_eval_expr(select_string, self.run_tab_table_dic[host_ip]):
                         self.run_tab_table_dic[host_ip]['hidden'] = False
                         self.run_tab_table_dic[host_ip]['state'] = Qt.Checked
                     else:
@@ -3519,10 +3673,21 @@ Please be free to contact liyanqing1987@163.com if any question."""
 
     def click_run_tab_table_header(self, index):
         """
-        Select or Un-select all host_ip(s) on self.run_tab_table when clicking "Host_Ip" title header.
+        Header click behavior on self.run_tab_table:
+          * column 0 (host_ip) -> toggle select/un-select all (existing behavior).
+          * other columns       -> sort by that column, toggling ascending/
+            descending on repeat clicks. This is the only table whose header
+            has a custom click action, so sorting is driven manually here
+            rather than via setSortingEnabled (which would conflict with the
+            select-all action on column 0).
         """
         if index == 0:
-            first_host_ip_item_state = self.run_tab_table.item(0, 0).checkState()
+            first_item = self.run_tab_table.item(0, 0)
+
+            if first_item is None:
+                return  # empty table, nothing to toggle
+
+            first_host_ip_item_state = first_item.checkState()
 
             if first_host_ip_item_state == Qt.Checked:
                 new_state = Qt.Unchecked
@@ -3532,9 +3697,37 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 self.update_run_tab_frame1('* Select all host_ip(s).')
 
             for row in range(self.run_tab_table.rowCount()):
-                self.run_tab_table.item(row, 0).setCheckState(new_state)
-                host_ip = self.run_tab_table.item(row, 0).text().strip()
-                self.run_tab_table_dic[host_ip]['state'] = new_state
+                row_item = self.run_tab_table.item(row, 0)
+
+                if row_item is None:
+                    continue
+
+                row_item.setCheckState(new_state)
+                host_ip = row_item.text().strip()
+
+                if host_ip in self.run_tab_table_dic:
+                    self.run_tab_table_dic[host_ip]['state'] = new_state
+
+            return
+
+        # Sort by the clicked non-host_ip column. Toggle direction on repeat.
+        last_column = getattr(self, 'run_tab_sort_column', -1)
+        last_order = getattr(self, 'run_tab_sort_order', Qt.AscendingOrder)
+
+        if index == last_column:
+            new_order = Qt.DescendingOrder if last_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            new_order = Qt.AscendingOrder
+
+        self.run_tab_sort_column = index
+        self.run_tab_sort_order = new_order
+
+        # setSortingEnabled must be off during sortItems so Qt does not also
+        # auto-resort on the next data fill; sortItems itself honors each
+        # item's __lt__ (SortableTableWidgetItem -> IP/number/text ordering).
+        self.run_tab_table.setSortingEnabled(False)
+        self.run_tab_table.sortItems(index, new_order)
+        self.run_tab_table.horizontalHeader().setSortIndicator(index, new_order)
 
     def run_tab_table_item_clicked(self, item):
         """
@@ -3567,7 +3760,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
                     my_show_message = ShowMessage('Error', 'Illegal command "' + str(run_command) + '".')
                     my_show_message.start()
                     time.sleep(3)
-                    my_show_message.terminate()
+                    my_show_message.stop()
                     self.update_run_tab_frame1('*Error*: Illegal command "' + str(run_command) + '".', color='red')
                     return
 
@@ -3578,7 +3771,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
                 my_show_message = ShowMessage('Error', 'Wrong format of Timeout "' + str(timeout) + '", it must be an integer.')
                 my_show_message.start()
                 time.sleep(3)
-                my_show_message.terminate()
+                my_show_message.stop()
                 self.update_run_tab_frame1('*Error*: Wrong format of Timeout "' + str(timeout) + '", it must be an integer.', color='red')
                 return
 
@@ -3610,34 +3803,127 @@ Please be free to contact liyanqing1987@163.com if any question."""
             # Call batch_run to execute specified command.
             self.update_run_tab_frame1('* Run command "' + str(run_command) + '" parallel with below batch_run command.')
 
+            # Require at least one selected host; otherwise batch_run would be
+            # launched with --parallel 0, which is now rejected.
+            if len(run_tab_selected_host_ip_list) == 0:
+                my_show_message = ShowMessage('Error', 'No host is selected.')
+                my_show_message.start()
+                time.sleep(3)
+                my_show_message.stop()
+                self.update_run_tab_frame1('*Error*: No host is selected.', color='red')
+                return
+
             output_file = str(tmp_batchRun_user_current_dir) + '/HOST'
 
-            if '"' in run_command:
-                batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run --hosts ' + str(host_list_file) + " --command '" + str(run_command) + "' --parallel " + str(len(run_tab_selected_host_ip_list)) + ' --timeout ' + str(timeout) + ' --output_message_level 1 --output_file ' + str(output_file)
-            else:
-                batch_run_command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run --hosts ' + str(host_list_file) + ' --command \"' + str(run_command) + '\" --parallel ' + str(len(run_tab_selected_host_ip_list)) + ' --timeout ' + str(timeout) + ' --output_message_level 1 --output_file ' + str(output_file)
+            # Cap parallelism to config.max_parallel (set in install.py/config.py;
+            # the getattr fallback keeps the GUI running even if an older config.py
+            # predates the max_parallel key). The RUN tab used to pass the full
+            # host count as --parallel, which spawned one ssh thread per host and
+            # exhausted the select() FD_SETSIZE=1024 limit, leaving hosts with
+            # empty output. Cap here so the displayed progress and the actual
+            # batch_run parallelism agree.
+            max_parallel = getattr(config, 'max_parallel', 512) or 512
+            selected_host_count = len(run_tab_selected_host_ip_list)
+            effective_parallel = min(selected_host_count, max_parallel)
 
-            my_show_message = ShowMessage('Info', '快马加鞭X' + str(len(run_tab_selected_host_ip_list)) + ', running ...')
+            batch_run_cmd = [
+                str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run',
+                '--hosts', str(host_list_file),
+                '--command', str(run_command),
+                '--parallel', str(effective_parallel),
+                '--timeout', str(timeout),
+                '--output_message_level', '1',
+                '--output_file', str(output_file),
+            ]
+
+            my_show_message = ShowMessage('Info', '快马加鞭X' + str(selected_host_count) + ' (parallel ' + str(effective_parallel) + '), running ...')
             my_show_message.start()
-            self.update_run_tab_frame1('  ' + str(batch_run_command))
-            os.system(batch_run_command)
-            self.update_run_tab_frame1('  Done')
-            my_show_message.terminate()
+            self.update_run_tab_frame1('  ' + ' '.join(shlex.quote(a) for a in batch_run_cmd))
 
-            # Clean up 'output_message' on self.run_tab_table_dic.
-            for host_ip in self.run_tab_table_dic.keys():
-                self.run_tab_table_dic[host_ip]['output_message'] = ''
+            # Run batch_run in a subprocess and poll it with a QTimer so the GUI
+            # stays responsive (and can be closed) instead of os.system blocking.
+            #
+            # Use DEVNULL (not PIPE) for stdout/stderr: the RUN tab only needs the
+            # per-host output files written by batch_run (--output_file), not the
+            # subprocess's own stdout. With PIPE the pipe buffer fills (~64KB) and
+            # the never-drained subprocess blocks forever -> hosts showed empty
+            # output. DEVNULL never fills, never leaks fds, never blocks.
+            try:
+                # Stop any previous run still in flight (shouldn't normally happen,
+                # but guards against a double-click / re-entry leaving a zombie timer).
+                prev_timer = getattr(self, '_run_poll_timer', None)
 
-            # Collect command output message.
-            for file_name in os.listdir(tmp_batchRun_user_current_dir):
-                if file_name in self.run_tab_table_dic:
-                    file_path = str(tmp_batchRun_user_current_dir) + '/' + str(file_name)
+                if prev_timer is not None:
+                    try:
+                        prev_timer.stop()
+                    except Exception:
+                        pass
 
+                prev_process = getattr(self, '_run_process', None)
+
+                if (prev_process is not None) and (prev_process.poll() is None):
+                    try:
+                        prev_process.terminate()
+                    except Exception:
+                        pass
+
+                run_process = subprocess.Popen(batch_run_cmd, shell=False,
+                                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self._run_process = run_process
+
+                poll_timer = QTimer(self)
+                poll_timer.setSingleShot(False)
+
+                def _poll_run():
+                    if run_process.poll() is not None:
+                        poll_timer.stop()
+                        # Guard: only finalize if this timer is still the active one,
+                        # so a stale timer can't clobber a newer run's results.
+                        if getattr(self, '_run_poll_timer', None) is poll_timer:
+                            self._run_poll_timer = None
+                            self._finalize_run_tab(my_show_message, tmp_batchRun_user_current_dir)
+                    else:
+                        QApplication.processEvents()
+
+                poll_timer.timeout.connect(_poll_run)
+                poll_timer.start(200)
+                # Keep reference so it is not GC'd while running.
+                self._run_poll_timer = poll_timer
+            except Exception as error:
+                self.update_run_tab_frame1('  *Error*: ' + str(error))
+                my_show_message.stop()
+
+    def _finalize_run_tab(self, my_show_message, tmp_batchRun_user_current_dir):
+        """Called when the RUN-tab batch_run subprocess exits."""
+        try:
+            my_show_message.stop()
+        except Exception:
+            pass
+
+        self.update_run_tab_frame1('  Done')
+
+        # Clean up 'output_message' on self.run_tab_table_dic.
+        for host_ip in self.run_tab_table_dic.keys():
+            self.run_tab_table_dic[host_ip]['output_message'] = ''
+
+        # Collect command output message.
+        try:
+            file_names = os.listdir(tmp_batchRun_user_current_dir)
+        except Exception:
+            file_names = []
+
+        for file_name in file_names:
+            if file_name in self.run_tab_table_dic:
+                file_path = str(tmp_batchRun_user_current_dir) + '/' + str(file_name)
+
+                try:
                     with open(file_path, 'r') as FP:
                         self.run_tab_table_dic[file_name]['output_message'] = FP.read().strip()
+                except Exception as error:
+                    self.run_tab_table_dic[file_name]['output_message'] = '*Error*: ' + str(error)
 
-            # Update self.run_tab_table.
-            self.gen_run_tab_table()
+        # Update self.run_tab_table.
+        self.gen_run_tab_table()
 
     def gen_run_tab_frame1(self):
         if not self.run_tab_frame1.layout():
@@ -3866,12 +4152,25 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.log_tab_table.setRowCount(1)
         self.log_tab_table.setItem(0, 0, loading_item)
 
-        self._log_load_thread = threading.Thread(target=self._collect_log_data_background, daemon=True)
+        # Read GUI values in the main thread (QWidget methods are not thread-safe);
+        # pass them into the background thread as plain data.
+        specified_user_list = self.log_tab_user_combo.currentText().strip().split()
+        specified_begin_date = self.log_tab_begin_date_edit.date().toString('yyyyMMdd')
+        specified_end_date = self.log_tab_end_date_edit.date().toString('yyyyMMdd')
+        specified_info = self.log_tab_info_line.text().strip()
+
+        self._log_load_thread = threading.Thread(target=self._collect_log_data_background,
+                                                 args=(specified_user_list, specified_begin_date,
+                                                       specified_end_date, specified_info),
+                                                 daemon=True)
         self._log_load_thread.start()
 
-    def _collect_log_data_background(self):
+    def _collect_log_data_background(self, specified_user_list, specified_begin_date, specified_end_date, specified_info):
         """Collect log data in background, then update table in main thread."""
-        self.collect_log_tab_table_info()
+        self.collect_log_tab_table_info(specified_user_list=specified_user_list,
+                                        specified_begin_date=specified_begin_date,
+                                        specified_end_date=specified_end_date,
+                                        specified_info=specified_info)
         QApplication.instance().postEvent(self, LogDataReadyEvent())
 
     def customEvent(self, event):
@@ -3884,7 +4183,7 @@ Please be free to contact liyanqing1987@163.com if any question."""
         """
         # self.log_tab_table
         self.log_tab_table.setShowGrid(True)
-        self.log_tab_table.setSortingEnabled(True)
+        self.log_tab_table.setSortingEnabled(False)
         self.log_tab_table.setColumnCount(0)
         self.log_tab_table_title_list = ['time', 'user', 'login_user', 'command', 'log']
         self.log_tab_table.setColumnCount(len(self.log_tab_table_title_list))
@@ -3901,24 +4200,39 @@ Please be free to contact liyanqing1987@163.com if any question."""
         log_icon = QIcon(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/data/pictures/log.png')
 
         for i, log_dic in enumerate(self.log_dic_list):
-            self.log_tab_table.setItem(i, 0, QTableWidgetItem(log_dic['time']))
-            self.log_tab_table.setItem(i, 1, QTableWidgetItem(log_dic['user']))
-            self.log_tab_table.setItem(i, 2, QTableWidgetItem(log_dic['login_user']))
-            self.log_tab_table.setItem(i, 3, QTableWidgetItem(log_dic['command']))
+            self.log_tab_table.setItem(i, 0, SortableTableWidgetItem(log_dic['time']))
+            self.log_tab_table.setItem(i, 1, SortableTableWidgetItem(log_dic['user']))
+            self.log_tab_table.setItem(i, 2, SortableTableWidgetItem(log_dic['login_user']))
+            self.log_tab_table.setItem(i, 3, SortableTableWidgetItem(log_dic['command']))
             item = QTableWidgetItem()
             item.setIcon(log_icon)
             self.log_tab_table.setItem(i, 4, item)
 
-    def collect_log_tab_table_info(self, max_records=5000):
+        self.log_tab_table.setSortingEnabled(True)
+
+    def collect_log_tab_table_info(self, max_records=5000, specified_user_list=None,
+                                   specified_begin_date=None, specified_end_date=None, specified_info=None):
         """
         Collect history records with specified user/begin_date/end_date.
         Reads files from tail for efficiency, stops early when enough records collected.
+
+        When called from a background thread, GUI values must be passed in
+        (specified_user_list/specified_begin_date/specified_end_date/specified_info)
+        because QWidget methods are not thread-safe.
         """
         self.log_dic_list = []
-        specified_user_list = self.log_tab_user_combo.currentText().strip().split()
-        specified_begin_date = self.log_tab_begin_date_edit.date().toString('yyyyMMdd')
-        specified_end_date = self.log_tab_end_date_edit.date().toString('yyyyMMdd')
-        specified_info = self.log_tab_info_line.text().strip()
+
+        if specified_user_list is None:
+            specified_user_list = self.log_tab_user_combo.currentText().strip().split()
+
+        if specified_begin_date is None:
+            specified_begin_date = self.log_tab_begin_date_edit.date().toString('yyyyMMdd')
+
+        if specified_end_date is None:
+            specified_end_date = self.log_tab_end_date_edit.date().toString('yyyyMMdd')
+
+        if specified_info is None:
+            specified_info = self.log_tab_info_line.text().strip()
 
         if 'ALL' in specified_user_list:
             specified_user_list = self.get_log_user_list()
@@ -4645,15 +4959,67 @@ Please be free to contact liyanqing1987@163.com if any question."""
         self.ai_feedback_widget.hide()
 
     def ai_handle_confirm_request(self, command):
-        """Show QMessageBox to confirm dangerous command execution."""
-        result = QMessageBox.question(
-            self,
-            'Confirm Command',
-            f'AI wants to execute:\n\n{command}\n\nAllow?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        self.ai_thread.set_confirm_result(result == QMessageBox.Yes)
+        """Show a size-capped, scrollable dialog to confirm dangerous command execution.
+
+        QMessageBox.question() grows with the command text and can push its
+        Yes/No buttons off-screen on long commands. We use a custom QDialog
+        with a read-only QTextEdit (scrollable, height-capped) so the buttons
+        always stay visible.
+        """
+        from PyQt5.QtWidgets import QDialog
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Confirm Command')
+        dialog.setModal(True)
+
+        layout = QVBoxLayout(dialog)
+
+        hint_label = QLabel('AI wants to execute:')
+        layout.addWidget(hint_label)
+
+        # Read-only, scrollable command view, height-capped so the dialog never
+        # grows beyond the screen regardless of command length.
+        command_view = QTextEdit()
+        command_view.setReadOnly(True)
+        command_view.setPlainText(command)
+        command_view.setMaximumHeight(300)
+        command_view.setWordWrapMode(QTextOption.NoWrap)
+        # Horizontal scrollbar for very long single lines.
+        command_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        command_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        layout.addWidget(command_view)
+
+        allow_label = QLabel('Allow?')
+        layout.addWidget(allow_label)
+
+        button_layout = QHBoxLayout()
+
+        yes_button = QPushButton('Yes')
+        no_button = QPushButton('No')
+        no_button.setDefault(True)
+        no_button.setFocus()
+        button_layout.addWidget(yes_button)
+        button_layout.addWidget(no_button)
+        layout.addLayout(button_layout)
+
+        result = {'accepted': False}
+
+        def on_yes():
+            result['accepted'] = True
+
+            dialog.accept()
+
+        def on_no():
+            result['accepted'] = False
+
+            dialog.reject()
+
+        yes_button.clicked.connect(on_yes)
+        no_button.clicked.connect(on_no)
+
+        dialog.exec_()
+
+        self.ai_thread.set_confirm_result(result['accepted'])
 # For AI TAB (end) #
 
 # For AI Menu (start) #
@@ -5712,8 +6078,10 @@ document.addEventListener('click', function(e) {
         try:
             os.makedirs(report_dir, exist_ok=True)
             test_file = report_dir + '/.write_test'
+
             with open(test_file, 'w') as f:
                 f.write('test')
+
             os.remove(test_file)
         except (PermissionError, OSError):
             report_dir = '/tmp/batchRun/ai_report'
@@ -5862,6 +6230,7 @@ document.addEventListener('click', function(e) {
                 if stripped.startswith('===') and stripped.endswith('===') and len(stripped) > 6:
                     if current_section:
                         sections[current_section] = current_lines
+
                     current_section = stripped.strip('=')
                     current_lines = []
                 else:
@@ -6078,6 +6447,7 @@ document.addEventListener('click', function(e) {
                     if line:
                         if 'system boot' in line:
                             parts = line.split('system boot')
+
                             if len(parts) > 1:
                                 host_findings['boot_time'] = parts[1].strip()
                         else:
@@ -6117,22 +6487,30 @@ document.addEventListener('click', function(e) {
         total_eol = sum(len(ips) for ips in eol_os.values())
 
         ssh_issues = []
+
         for ip, f in findings.items():
             if f.get('scan_error') or 'SSHD_CONFIG' in f.get('permission_denied_sections', []):
                 continue
+
             cfg = f.get('ssh_config', {})
+
             if not cfg:
                 continue
+
             risk_items = []
+
             if cfg.get('PermitEmptyPasswords', '').lower() == 'yes':
                 risk_items.append('PermitEmptyPasswords=yes')
+
             if cfg.get('PasswordAuthentication', '').lower() == 'yes':
                 risk_items.append('PasswordAuthentication=yes')
+
             try:
                 if int(cfg.get('MaxAuthTries', 6)) > 6:
                     risk_items.append(f'MaxAuthTries={cfg["MaxAuthTries"]}')
             except (ValueError, TypeError):
                 pass
+
             if risk_items:
                 ssh_issues.append((ip, cfg, risk_items))
 
@@ -6142,51 +6520,67 @@ document.addEventListener('click', function(e) {
         risky_ports = {6379: 'Redis', 3306: 'MySQL', 27017: 'MongoDB', 9200: 'Elasticsearch',
                        5432: 'PostgreSQL', 11211: 'Memcached', 2379: 'etcd', 8080: 'HTTP-ALT'}
         exposed_services = []
+
         for ip, f in findings.items():
             if f.get('scan_error'):
                 continue
+
             for port_info in f.get('listening_ports', []):
                 port = port_info.get('port', 0)
                 addr = port_info.get('address', '')
+
                 if port in risky_ports and addr not in ('127.0.0.1', '::1', 'localhost', '[::1]'):
                     exposed_services.append((ip, port, risky_ports[port], addr, port_info.get('process', '')))
 
         suid_hosts = [(ip, f['suid_files']) for ip, f in findings.items() if f.get('suid_files')]
         bad_perms_hosts = []
+
         for ip, f in findings.items():
             bad_files = []
+
             for file_info in f.get('sensitive_files', []):
                 path = file_info.get('path', '')
                 perms = file_info.get('perms', '')
+
                 if 'shadow' in path and perms not in ('0', '000', '640', '600'):
                     bad_files.append(file_info)
                 elif path == '/etc/passwd' and perms not in ('644', '44'):
                     bad_files.append(file_info)
+
             if bad_files:
                 bad_perms_hosts.append((ip, bad_files))
 
         suspicious_patterns = ['wget ', 'curl ', '/tmp/', 'base64', 'eval ', 'python -c',
                                'bash -i', '/dev/tcp', 'nc ', 'ncat ']
         suspicious_cron_hosts = []
+
         for ip, f in findings.items():
             suspicious_entries = []
+
             for entry in f.get('crontab_entries', []):
                 cmd_str = entry.get('command', '') if isinstance(entry, dict) else entry
+
                 if any(p in cmd_str.lower() for p in suspicious_patterns):
                     suspicious_entries.append(entry)
+
             if suspicious_entries:
                 suspicious_cron_hosts.append((ip, suspicious_entries))
 
         kernel_issues = []
+
         for ip, f in findings.items():
             if f.get('scan_error'):
                 continue
+
             ks = f.get('kernel_security', {})
             issues = []
+
             if ks.get('ip_forward') == '1':
                 issues.append('IP转发已开启')
+
             if ks.get('aslr') in ('0', '1'):
                 issues.append(f'ASLR未完全启用(值={ks.get("aslr")})')
+
             if issues:
                 kernel_issues.append((ip, ks, issues))
 
@@ -6195,24 +6589,33 @@ document.addEventListener('click', function(e) {
 
         # Risk scoring
         per_host_scores = {}
+
         for ip, f in findings.items():
             if f.get('scan_error'):
                 per_host_scores[ip] = -1
                 continue
+
             score = 0
             cfg = f.get('ssh_config', {})
+
             if cfg.get('PermitEmptyPasswords', '').lower() == 'yes':
                 score += 3
+
             if f.get('uid0_accounts'):
                 score += 3
+
             if f.get('kernel_security', {}).get('aslr') == '0':
                 score += 3
+
             if f.get('kernel_security', {}).get('ip_forward') == '1':
                 score += 1
+
             if f.get('failed_logins', 0) > 100:
                 score += 1
+
             if f.get('suid_files'):
                 score += 1
+
             per_host_scores[ip] = score
 
         high_risk = [(ip, s) for ip, s in per_host_scores.items() if s >= 6]
@@ -6305,8 +6708,10 @@ document.addEventListener("DOMContentLoaded", function() {
             var limit = 10;
             rows.forEach(function(r, i) {
                 tbody.appendChild(r);
+
                 if (rows.length > limit) {
                     if (i >= limit) r.classList.add("extra"); else r.classList.remove("extra");
+
                 }
             });
         });
@@ -6324,6 +6729,7 @@ document.addEventListener("DOMContentLoaded", function() {
         def nav_dot(count):
             if count > 0:
                 return '<span class="nav-dot dot-red"></span>'
+
             return '<span class="nav-dot dot-green"></span>'
 
         # Navigation sidebar with status dots
@@ -6550,6 +6956,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         # Full crontab inventory table.
         all_cron_rows = []
+
         for ip, f in findings.items():
             for entry in f.get('crontab_entries', []):
                 if isinstance(entry, dict):
@@ -6776,9 +7183,69 @@ document.addEventListener("DOMContentLoaded", function() {
         """
         When window close, post-process.
         """
+        # Stop the AI thread.
         if hasattr(self, 'ai_thread') and self.ai_thread and self.ai_thread.isRunning():
             self.ai_thread.stop()
             self.ai_thread.wait(3000)
+
+        # Stop background worker threads so they cannot emit into destroyed widgets.
+        for attr in ('_ca_ssh_thread', '_sec_scan_thread', '_insight_thread',
+                     '_ssh_test_thread', '_cleanup_thread'):
+            t = getattr(self, attr, None)
+
+            if t is not None and hasattr(t, 'isRunning') and t.isRunning():
+                try:
+                    if hasattr(t, 'stop'):
+                        t.stop()
+
+                    t.wait(2000)
+                except Exception:
+                    pass
+
+        # Stop any running tool-command threads (network_scan, sample_host_*, ...).
+        for t in list(getattr(self, '_tool_threads', []) or []):
+            try:
+                if hasattr(t, 'stop'):
+                    t.stop()
+
+                t.wait(2000)
+            except Exception:
+                pass
+
+        if getattr(self, '_tool_threads', None):
+            self._tool_threads.clear()
+
+        # Stop the RUN-tab batch_run subprocess + its poll timer.
+        poll_timer = getattr(self, '_run_poll_timer', None)
+
+        if poll_timer is not None:
+            try:
+                poll_timer.stop()
+            except Exception:
+                pass
+
+            self._run_poll_timer = None
+
+        run_process = getattr(self, '_run_process', None)
+
+        if run_process is not None and run_process.poll() is None:
+            try:
+                run_process.terminate()
+                # Reap the child so we don't leave a defunct/running batch_run
+                # behind after the window closes.
+                run_process.wait(timeout=3)
+            except Exception:
+                try:
+                    run_process.kill()
+                except Exception:
+                    pass
+
+        # Shut down the embedded HTTP server.
+        if hasattr(self, 'web_server') and self.web_server is not None:
+            try:
+                self.web_server.shutdown()
+            except Exception:
+                pass
 
         common.bprint('Bye', date_format='%Y-%m-%d %H:%M:%S')
         self.xterm_widget.close()
@@ -6830,7 +7297,7 @@ class ShowTopFile(QThread):
         self.top_file = top_file
 
     def run(self):
-        command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/show_top_file --top_file ' + str(self.top_file)
+        command = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/show_top_file --top_file ' + shlex.quote(str(self.top_file))
         os.system(command)
 
 
@@ -6841,11 +7308,60 @@ class ShowMessage(QThread):
     def __init__(self, title, message):
         super(ShowMessage, self).__init__()
         self.title = title
-        self.message = re.sub(r'"', '\\"', message)
+        self.message = message
+        self._process = None
 
     def run(self):
-        command = 'python3 ' + str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/message.py --title "' + str(self.title) + '" --message "' + str(self.message) + '"'
-        os.system(command)
+        command = ('python3 '
+                   + str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/tools/message.py'
+                   + ' --title ' + shlex.quote(str(self.title))
+                   + ' --message ' + shlex.quote(str(self.message)))
+        self._process = subprocess.Popen(command, shell=True)
+        self._process.wait()
+
+    def stop(self):
+        """Kill the message subprocess then terminate the thread."""
+        if self._process and self._process.poll() is None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
+        self.terminate()
+
+
+class ToolCommandThread(QThread):
+    """
+    Run an external tool command in a background thread (non-blocking) so the
+    GUI stays responsive during long tools like network_scan / sample_host_*.
+    Emits `finished_signal(command)` when the subprocess exits.
+    """
+    finished_signal = pyqtSignal(str)
+
+    def __init__(self, command):
+        super().__init__()
+        self.command = command
+        self._process = None
+        self._stop_flag = False
+
+    def stop(self):
+        self._stop_flag = True
+
+        if self._process and self._process.poll() is None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
+    def run(self):
+        try:
+            self._process = subprocess.Popen(shlex.split(self.command), shell=False,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self._process.wait()
+        except Exception as error:
+            common.bprint(f'Failed on running tool command: {error}', level='Error')
+        finally:
+            self.finished_signal.emit(str(self.command))
 
 
 class SshTestThread(QThread):
@@ -6876,14 +7392,14 @@ class SshTestThread(QThread):
                     f.write(ip + '\n')
 
             batch_run_bin = os.environ.get('BATCH_RUN_INSTALL_PATH', '') + '/bin/batch_run'
-            cmd = (f'{batch_run_bin} --hosts {host_list_file} '
-                   f'--command "uptime -s" '
-                   f'--parallel {total} --timeout 10 '
-                   f'--output_message_level 3 --output_file {output_dir}/HOST')
+            cmd = [batch_run_bin, '--hosts', host_list_file,
+                   '--command', 'uptime -s',
+                   '--parallel', str(total), '--timeout', '10',
+                   '--output_message_level', '3', '--output_file', output_dir + '/HOST']
 
             self.progress_signal.emit(0, total, '')
 
-            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process = subprocess.Popen(cmd, shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             while process.poll() is None:
                 if self._stop_flag:
@@ -6891,6 +7407,7 @@ class SshTestThread(QThread):
                     process.wait()
                     self.finished_signal.emit({'ssh_failed': None, 'boot_time': {}})
                     return
+
                 time.sleep(0.5)
 
                 if not os.path.isdir(output_dir):
@@ -6947,6 +7464,7 @@ class SshTestThread(QThread):
                             reason = 'SSH无输出（连接可能被静默拒绝或密钥协商失败）'
                         else:
                             reason = MainWindow._classify_ssh_failure(output_content)
+
                         ssh_failed_hosts.append((ip, reason))
                 else:
                     ssh_failed_hosts.append((ip, '未执行（batch_run未处理该主机）'))
@@ -6979,67 +7497,76 @@ class SecurityScanThread(QThread):
         total = len(self.host_list)
         results = {}
 
-        tmp_dir = f'/tmp/batchRun/{self.user}/security_scan_{os.getpid()}'
-        os.makedirs(tmp_dir, exist_ok=True)
+        try:
+            tmp_dir = f'/tmp/batchRun/{self.user}/security_scan_{os.getpid()}'
+            os.makedirs(tmp_dir, exist_ok=True)
 
-        host_list_file = f'{tmp_dir}/host.list'
-        output_dir = f'{tmp_dir}/output'
-        os.makedirs(output_dir, exist_ok=True)
+            host_list_file = f'{tmp_dir}/host.list'
+            output_dir = f'{tmp_dir}/output'
+            os.makedirs(output_dir, exist_ok=True)
 
-        with open(host_list_file, 'w') as f:
-            for ip, ssh_port in self.host_list:
-                if ssh_port:
-                    f.write(f'{ip} ssh_port={ssh_port}\n')
+            with open(host_list_file, 'w') as f:
+                for ip, ssh_port in self.host_list:
+                    if ssh_port:
+                        f.write(f'{ip} ssh_port={ssh_port}\n')
+                    else:
+                        f.write(f'{ip}\n')
+
+            batch_run_py = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run.py'
+
+            # Inline script via base64 to avoid SCP overhead (eliminates 2 extra round-trips per host).
+            script_path = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/scripts/security/security_scan.sh'
+
+            with open(script_path, 'rb') as f:
+                script_b64 = base64.b64encode(f.read()).decode()
+
+            inline_command = f'echo {script_b64} | base64 -d | bash'
+
+            cmd = ['python3', batch_run_py, '--hosts', host_list_file,
+                   '--command', inline_command,
+                   '--parallel', str(self.parallel),
+                   '--timeout', str(self.timeout),
+                   '--output_message_level', '1',
+                   '--output_file', output_dir + '/HOST']
+
+            self.progress_signal.emit(0, total, 'batch_run')
+
+            process = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+
+            while process.poll() is None:
+                if self._stop_flag:
+                    process.terminate()
+                    process.wait()
+                    break
+
+                time.sleep(0.5)
+                files = os.listdir(output_dir) if os.path.isdir(output_dir) else []
+                completed = len(files)
+
+                if completed > 0:
+                    latest_file = max(files, key=lambda f: os.path.getmtime(os.path.join(output_dir, f)))
+                    self.progress_signal.emit(completed, total, latest_file)
+
+            for ip, _ in self.host_list:
+                output_file = f'{output_dir}/{ip}'
+
+                if os.path.exists(output_file):
+                    with open(output_file, 'r') as f:
+                        results[ip] = f.read()
                 else:
-                    f.write(f'{ip}\n')
+                    results[ip] = ''
+        except Exception as error:
+            common.bprint(f'Security scan failed: {error}', date_format='%Y-%m-%d %H:%M:%S', level='Error')
+            results = {ip: f'ERROR: {error}' for ip, _ in self.host_list}
+        finally:
+            try:
+                import shutil
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
-        batch_run_py = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/bin/batch_run.py'
-
-        # Inline script via base64 to avoid SCP overhead (eliminates 2 extra round-trips per host).
-        script_path = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/scripts/security/security_scan.sh'
-
-        with open(script_path, 'rb') as f:
-            script_b64 = base64.b64encode(f.read()).decode()
-
-        inline_command = f'echo {script_b64} | base64 -d | bash'
-
-        cmd = (f'python3 {batch_run_py} --hosts {host_list_file}'
-               f' --command "{inline_command}"'
-               f' --parallel {self.parallel}'
-               f' --timeout {self.timeout}'
-               f' --output_message_level 1'
-               f' --output_file {output_dir}/HOST')
-
-        self.progress_signal.emit(0, total, 'batch_run')
-
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE)
-
-        while process.poll() is None:
-            if self._stop_flag:
-                process.terminate()
-                process.wait()
-                break
-            time.sleep(0.5)
-            files = os.listdir(output_dir) if os.path.isdir(output_dir) else []
-            completed = len(files)
-            if completed > 0:
-                latest_file = max(files, key=lambda f: os.path.getmtime(os.path.join(output_dir, f)))
-                self.progress_signal.emit(completed, total, latest_file)
-
-        for ip, _ in self.host_list:
-            output_file = f'{output_dir}/{ip}'
-
-            if os.path.exists(output_file):
-                with open(output_file, 'r') as f:
-                    results[ip] = f.read()
-            else:
-                results[ip] = ''
-
-        import shutil
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        self.finished_signal.emit(results)
+            self.finished_signal.emit(results)
 
 
 class WebServer:
@@ -7052,21 +7579,87 @@ class WebServer:
         if self.server and self.server_thread and self.server_thread.is_alive():
             return self.server_port
 
-        from http.server import HTTPServer, SimpleHTTPRequestHandler
+        from http.server import HTTPServer, BaseHTTPRequestHandler
 
         port = self._find_free_port()
-        web_dir = str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/web'
-        data_dir = str(config.db_path) + '/host_stat'
+        web_dir = os.path.realpath(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/web')
+        data_dir = os.path.realpath(str(config.db_path) + '/host_stat')
 
-        class Handler(SimpleHTTPRequestHandler):
+        def _safe_join(base_dir, rel_path):
+            if not base_dir:
+                return None
+
+            rel_path = rel_path.split('?', 1)[0].split('#', 1)[0].lstrip('/')
+            candidate = os.path.normpath(os.path.join(base_dir, rel_path))
+            base_real = os.path.realpath(base_dir)
+            candidate_real = os.path.realpath(candidate)
+
+            if candidate_real != base_real and not candidate_real.startswith(base_real + os.sep):
+                return None
+
+            if not os.path.exists(candidate_real):
+                return None
+
+            return candidate_real
+
+        class Handler(BaseHTTPRequestHandler):
             def translate_path(self, path):
                 path = path.split('?', 1)[0].split('#', 1)[0]
 
                 if path.startswith('/host_stat'):
-                    rel = path[len('/host_stat'):].lstrip('/')
-                    return os.path.join(data_dir, rel)
+                    rel = path[len('/host_stat'):]
+                    return _safe_join(data_dir, rel)
 
-                return os.path.join(web_dir, path.lstrip('/'))
+                return _safe_join(web_dir, path)
+
+            def do_GET(self):
+                path = self.translate_path(self.path)
+
+                if path is None:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(b'Not Found')
+                    return
+
+                if os.path.isdir(path):
+                    try:
+                        entries = sorted(os.listdir(path))
+                        lines = ['<html><head><meta charset="utf-8"><title>Index</title></head><body><h1>Index</h1><ul>']
+
+                        for entry in entries:
+                            full = os.path.join(path, entry)
+                            name = entry + '/' if os.path.isdir(full) else entry
+                            safe = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            lines.append('<li><a href="{0}">{1}</a></li>'.format(safe, safe))
+
+                        lines.append('</ul></body></html>')
+                        content = '\n'.join(lines).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.send_header('Content-Length', str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
+
+                    return
+
+                try:
+                    with open(path, 'rb') as FH:
+                        content = FH.read()
+
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                except PermissionError:
+                    self.send_response(403)
+                    self.end_headers()
+                except Exception:
+                    self.send_response(500)
+                    self.end_headers()
 
             def log_message(self, format, *args):
                 pass
@@ -7092,6 +7685,17 @@ class WebServer:
             webbrowser.open(url)
         except Exception as error:
             common.bprint(f'Failed to check host statistic data. Error {str(error)}', date_format='%Y-%m-%d %H:%M:%S', level='Error')
+
+    def shutdown(self):
+        try:
+            if self.server is not None:
+                self.server.shutdown()
+                self.server.server_close()
+        except Exception:
+            pass
+
+        self.server = None
+        self.server_thread = None
 
 
 class AiInputBox(QTextEdit):

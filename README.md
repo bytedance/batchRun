@@ -1,4 +1,4 @@
-**Version:** V2.4
+**Version:** V2.5
 
 
 ## What's batchRun?
@@ -41,7 +41,7 @@ Come into <BATCH_RUN_INSTALL_PATH>/config directory,
 
   - Update "config.py" for batchRun basic configuration.
   - Update "host.list" for group-host relationship.
-  - Update "password.encrypted" for encrypted user/password information if necessary.
+  - Use "tools/save_password" to save encrypted user/password information if necessary.
 
 
 ## Sample
@@ -49,7 +49,7 @@ Collect host information with tool "sample_host_info".
 
 
 ## Doc
-More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_manual.pdf)
+More details please see ["docs/batchRun_user_manual.md"](./docs/batchRun_user_manual.md)
 
 
 ## Update history
@@ -70,3 +70,11 @@ More details please see ["docs/batchRun_user_manual.pdf"](./docs/batchRun_user_m
 | V2.3    | (2025.12) | Add stat curve function on STAT tab.       |
 | V2.4    | (2026.06) | Add AI menu: assistant, cluster analysis,  |
 |         |           | security analysis.                         |
+| V2.5    | (2026.08) | Security hardening: Fernet password store  |
+|         |           | with separate master key; path-traversal   |
+|         |           | protection on the embedded web server; AST |
+|         |           | safe expression evaluator; SQL identifier   |
+|         |           | validation; non-blocking GUI tool threads;  |
+|         |           | password redaction in command history;     |
+|         |           | `-P 0` disallowed (use [1, max_parallel]); |
+|         |           | sample tools pass password via env var.    |

@@ -44,8 +44,8 @@ def read_args():
                         help='Specify the user password for SSH login to specified host.')
     parser.add_argument('-P', '--parallel',
                         type=int,
-                        default=0,
-                        help='Specify the parallelism for batch_run, default is "0".')
+                        default=getattr(config, 'max_parallel', 512),
+                        help='Specify the parallelism for batch_run, default is config.max_parallel.')
     parser.add_argument('-t', '--timeout',
                         type=int,
                         default=20,
@@ -71,6 +71,12 @@ def read_args():
 
 class SampleHostStat():
     def __init__(self, host_list, group_list, user, password, parallel, timeout, host_info_json, output_dir):
+        # Pass the password via the BATCH_RUN_PASSWORD env var (inherited by the
+        # batch_run subprocess) instead of a "--password" CLI argument, so it
+        # is not exposed in the child process argv / `ps`.
+        if password:
+            os.environ['BATCH_RUN_PASSWORD'] = password
+
         self.host_list = host_list
         self.group_list = group_list
         self.user = user
@@ -103,9 +109,6 @@ class SampleHostStat():
 
         if user:
             batch_run_command = str(batch_run_command) + ' --user ' + str(user)
-
-        if password:
-            batch_run_command = str(batch_run_command) + ' --password ' + str(password)
 
         batch_run_command = str(batch_run_command) + ' --parallel ' + str(parallel)
 
@@ -246,7 +249,7 @@ class SampleHostStat():
         batch_run_command = self.get_batch_run_command(host_list, group_list, self.user, self.password, self.parallel, self.timeout)
         command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.stat'
         common.bprint(command, indent=4)
-        os.system(command)
+        common.run_command(command)
 
     def get_host_stat(self):
         common.bprint('\n>>> Collecting host stat ...')
@@ -289,7 +292,7 @@ class SampleHostStat():
         batch_run_command = self.get_batch_run_command(host_list, group_list, self.user, self.password, self.parallel, self.timeout)
         command = str(batch_run_command) + ' --command "' + str(sample_command) + '" --output_message_level 1 --output_file ' + str(self.output_dir) + '/HOST.top'
         common.bprint(command, indent=4)
-        os.system(command)
+        common.run_command(command)
 
     def link_host_stat_json(self):
         common.bprint('\n>>> Link host_stat.json to top directory ...')
@@ -309,7 +312,14 @@ class SampleHostStat():
 
     def cleanup(self):
         common.bprint('\n>>> Cleaning up <HOST>.stat files ...')
-        os.system('rm -f ' + str(self.output_dir) + '/*.stat')
+
+        import glob
+
+        for path in glob.glob(str(self.output_dir) + '/*.stat'):
+            try:
+                os.remove(path)
+            except OSError as error:
+                common.bprint('    *Error*: ' + str(error))
 
     def sample_host_stat(self):
         # Sample host stat information.

@@ -7,7 +7,25 @@ import sqlite3
 sys.path.append(str(os.environ['BATCH_RUN_INSTALL_PATH']) + '/common')
 import common
 
+# A journal this old is almost certainly the residue of a crashed process, not
+# an in-flight long transaction. We only auto-remove journals older than this to
+# avoid corrupting a genuinely long-running write transaction.
 JOURNAL_STALE_SECONDS = 600
+JOURNAL_REMOVE_SECONDS = 86400
+
+# SQLite identifiers (table/column names) must match this strict pattern.
+# Anything else is rejected before being interpolated into SQL, closing the
+# injection vector since SQLite does not support parameterizing identifiers.
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def _validate_identifier(name, kind='identifier'):
+    """Return True if name is a safe SQL identifier, else log and return False."""
+    if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+        common.bprint(f'Invalid SQL {kind}: "{name}". Only [A-Za-z_][A-Za-z0-9_]* is allowed.', level='Error')
+        return False
+
+    return True
 
 
 def connect_db_file(db_file, mode='read'):
@@ -15,7 +33,7 @@ def connect_db_file(db_file, mode='read'):
     Connect specified db_file with read/write mode.
     """
     result = 'passed'
-    conn = ''
+    conn = None
 
     if mode == 'write':
         journal_db_file = str(db_file) + '-journal'
@@ -27,7 +45,7 @@ def connect_db_file(db_file, mode='read'):
             except OSError:
                 journal_age = 0
 
-            if journal_age > JOURNAL_STALE_SECONDS:
+            if journal_age > JOURNAL_REMOVE_SECONDS:
                 common.bprint(f'Stale journal file "{journal_db_file}" detected (age: {int(journal_age)}s), removing it.', level='Warning')
 
                 try:
@@ -36,8 +54,9 @@ def connect_db_file(db_file, mode='read'):
                     common.bprint(f'Failed to remove stale journal file: {error}', level='Error')
                     result = 'locked'
                     return result, conn
-            else:
-                common.bprint(f'Database file "{db_file}" is on another connection (journal age: {int(journal_age)}s), will not connect it.', level='Warning')
+            elif journal_age > JOURNAL_STALE_SECONDS:
+                # Possibly an in-flight transaction; do not delete, just back off.
+                common.bprint(f'Database file "{db_file}" appears locked (journal age: {int(journal_age)}s), will not connect.', level='Warning')
                 result = 'locked'
                 return result, conn
     elif mode == 'read':
@@ -54,13 +73,13 @@ def connect_db_file(db_file, mode='read'):
         common.bprint(error, color='red', display_method=1, indent=9)
         result = 'failed'
 
-        if conn != '':
+        if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
 
-            conn = ''
+            conn = None
 
     return result, conn
 
@@ -69,7 +88,10 @@ def connect_preprocess(db_file, orig_conn, mode='read'):
     """
     Extension for connect_db_file(), can use orig_conn instead of repeated connection.
     """
-    if orig_conn == '':
+    # Treat any falsy orig_conn ('', None, 0) as "no connection provided" so the
+    # many callers that pass '' (e.g. common_ai_log) create a fresh connection
+    # instead of trying to call .cursor() on an empty string.
+    if not orig_conn:
         (result, conn) = connect_db_file(db_file, mode)
     else:
         result = 'passed'
@@ -107,7 +129,7 @@ def get_sql_table_list(db_file, orig_conn):
         common.bprint(f'Failed on getting table list on db_file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if orig_conn == '':
+        if orig_conn is None:
             conn.close()
 
     return table_list
@@ -118,6 +140,9 @@ def get_sql_table_count(db_file, orig_conn, table_name):
     How many lines of the database table.
     """
     count = 'N/A'
+
+    if not _validate_identifier(table_name, 'table name'):
+        return count
 
     (result, conn, curs) = connect_preprocess(db_file, orig_conn)
 
@@ -135,7 +160,7 @@ def get_sql_table_count(db_file, orig_conn, table_name):
         common.bprint(f'Failed on getting table count for table "{table_name}" on db_file "' + str(db_file) + '".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if orig_conn == '':
+        if orig_conn is None:
             conn.close()
 
     return count
@@ -146,6 +171,12 @@ def get_sql_table_key_list(db_file, orig_conn, table_name, key):
     Get key list from the specified table on specified db file.
     """
     key_list = []
+
+    if not _validate_identifier(table_name, 'table name'):
+        return key_list
+
+    if not _validate_identifier(key, 'key'):
+        return key_list
 
     (result, conn, curs) = connect_preprocess(db_file, orig_conn)
 
@@ -161,7 +192,7 @@ def get_sql_table_key_list(db_file, orig_conn, table_name, key):
         common.bprint(f'Failed on getting table key list on db_file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if orig_conn == '':
+        if orig_conn is None:
             conn.close()
 
     return key_list
@@ -172,6 +203,10 @@ def get_sql_table_data(db_file, orig_conn, table_name, key_list=None, select_con
     With specified db_file-table_name, get all data from specified key_list.
     """
     data_dic = {}
+
+    if not _validate_identifier(table_name, 'table name'):
+        return data_dic
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn)
 
     if result == 'failed':
@@ -187,6 +222,7 @@ def get_sql_table_data(db_file, orig_conn, table_name, key_list=None, select_con
             results = curs.execute(command, select_params)
         else:
             results = curs.execute(command)
+
         all_items = results.fetchall()
         table_key_list = [tuple[0] for tuple in curs.description]
         curs.close()
@@ -216,7 +252,7 @@ def get_sql_table_data(db_file, orig_conn, table_name, key_list=None, select_con
         common.bprint(f'Failed on getting table info from table "{table_name}" of db_file "{db_file}".', level='Warning')
         common.bprint(error, color='yellow', display_method=1, indent=11)
     finally:
-        if orig_conn == '':
+        if orig_conn is None:
             conn.close()
 
     return data_dic
@@ -226,6 +262,23 @@ def delete_sql_table_rows(db_file, orig_conn, table_name, row_id, begin_line, en
     """
     Delete specified table rows (from begin_line to end_line).
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
+    if not _validate_identifier(row_id, 'row_id'):
+        return
+
+    try:
+        begin_line = int(begin_line)
+        end_line = int(end_line)
+    except (TypeError, ValueError):
+        common.bprint(f'Invalid line range {begin_line}-{end_line}.', level='Error')
+        return
+
+    if begin_line < 0 or end_line < begin_line:
+        common.bprint(f'Invalid line range {begin_line}-{end_line}.', level='Error')
+        return
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
     if (result == 'failed') or (result == 'locked'):
@@ -242,7 +295,7 @@ def delete_sql_table_rows(db_file, orig_conn, table_name, row_id, begin_line, en
         common.bprint(f'Failed on deleting table "{table_name}" lines {begin_line}-{end_line}.', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if commit and orig_conn == '':
+        if commit and orig_conn is None:
             conn.close()
 
 
@@ -250,6 +303,9 @@ def cleanup_sql_table(db_file, orig_conn, table_name, commit=True):
     """
     Cleanup table if it exists.
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
     if (result == 'failed') or (result == 'locked'):
@@ -266,7 +322,7 @@ def cleanup_sql_table(db_file, orig_conn, table_name, commit=True):
         common.bprint(f'Failed on cleaning up table "{table_name}" from db_file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if commit and orig_conn == '':
+        if commit and orig_conn is None:
             conn.close()
 
 
@@ -274,6 +330,9 @@ def drop_sql_table(db_file, orig_conn, table_name, commit=True):
     """
     Drop table if it exists.
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
     if (result == 'failed') or (result == 'locked'):
@@ -290,7 +349,7 @@ def drop_sql_table(db_file, orig_conn, table_name, commit=True):
         common.bprint(f'Failed on drop table "{table_name}" from db_file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if commit and orig_conn == '':
+        if commit and orig_conn is None:
             conn.close()
 
 
@@ -298,6 +357,9 @@ def create_sql_table(db_file, orig_conn, table_name, init_string, commit=True):
     """
     Create a table if it not exists, initialization the setting.
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
     if (result == 'failed') or (result == 'locked'):
@@ -314,7 +376,7 @@ def create_sql_table(db_file, orig_conn, table_name, init_string, commit=True):
         common.bprint(f'Failed on creating table "{table_name}" on db file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if commit and orig_conn == '':
+        if commit and orig_conn is None:
             conn.close()
 
 
@@ -322,6 +384,9 @@ def insert_into_sql_table(db_file, orig_conn, table_name, value_string, commit=T
     """
     Insert new value into sql table.
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
     (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
     if (result == 'failed') or (result == 'locked'):
@@ -338,14 +403,20 @@ def insert_into_sql_table(db_file, orig_conn, table_name, value_string, commit=T
         common.bprint(f'Failed on inserting specified values into table "{table_name}" on db file "{db_file}".', level='Error')
         common.bprint(error, color='red', display_method=1, indent=9)
     finally:
-        if commit and orig_conn == '':
+        if commit and orig_conn is None:
             conn.close()
 
 
-def update_sql_table_data(db_file, orig_conn, table_name, set_condition='', where_condition='', commit=True):
+def update_sql_table_data(db_file, orig_conn, table_name, set_condition='', where_condition='', commit=True, params=None):
     """
     Update sql table with set_condition on where_condition.
+    Pass ``params`` (list/tuple) to bind ``?`` placeholders in
+    set_condition/where_condition via parameterized execution, avoiding
+    SQL injection from interpolated values.
     """
+    if not _validate_identifier(table_name, 'table name'):
+        return
+
     if set_condition and where_condition:
         (result, conn, curs) = connect_preprocess(db_file, orig_conn, mode='write')
 
@@ -354,7 +425,12 @@ def update_sql_table_data(db_file, orig_conn, table_name, set_condition='', wher
 
         try:
             command = "UPDATE '" + str(table_name) + "' " + str(set_condition) + " " + str(where_condition)
-            curs.execute(command)
+
+            if params:
+                curs.execute(command, params)
+            else:
+                curs.execute(command)
+
             curs.close()
 
             if commit:
@@ -363,7 +439,7 @@ def update_sql_table_data(db_file, orig_conn, table_name, set_condition='', wher
             common.bprint(f'Failed on updating table "{table_name}" on db file "{db_file}".', level='Error')
             common.bprint(error, color='red', display_method=1, indent=9)
         finally:
-            if commit and orig_conn == '':
+            if commit and orig_conn is None:
                 conn.close()
 
 
@@ -383,7 +459,7 @@ def gen_sql_table_key_string(key_list, key_type_list=None):
 
         if i == 0:
             key_string = str(key_string) + "'" + str(key) + "' " + str(key_type) + ","
-        elif i == len(key_list)-1:
+        elif i == len(key_list) - 1:
             key_string = str(key_string) + " '" + str(key) + "' " + str(key_type) + ");"
         else:
             key_string = str(key_string) + " '" + str(key) + "' " + str(key_type) + ","
@@ -408,7 +484,7 @@ def gen_sql_table_value_string(value_list, autoincrement=False):
                 value_string = str(value_string) + 'NULL,'
             else:
                 value_string = str(value_string) + "'" + str(value) + "',"
-        elif i == len(value_list)-1:
+        elif i == len(value_list) - 1:
             if autoincrement and (value == 'NULL'):
                 value_string = str(value_string) + ' NULL);'
             else:

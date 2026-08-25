@@ -25,7 +25,7 @@ def read_args():
     args = parser.parse_args()
 
     if not os.path.exists(args.patch_path):
-        common.bprint('"' + str(args.path_path) + '": No such patch path.', level='Error')
+        common.bprint('"' + str(args.patch_path) + '": No such patch path.', level='Error')
         sys.exit(1)
 
     return args.patch_path
@@ -60,16 +60,19 @@ class Patch():
     def get_py_list(self, specified_path):
         """
         Get all python files from specified_path with relative path format.
+        Uses os.path.relpath (not regex on the path) so dots/special chars in
+        specified_path cannot be interpreted as regex metacharacters.
         """
         py_list = []
 
         for root_path, c_dirs, c_files in os.walk(specified_path):
             for c_file in c_files:
                 if re.match(r'^.*\.py$', c_file) and os.path.isfile(str(root_path) + '/' + str(c_file)):
-                    if root_path == specified_path:
+                    relative_path = os.path.relpath(root_path, specified_path)
+
+                    if relative_path == '.':
                         py_file = c_file
                     else:
-                        relative_path = re.sub(str(specified_path) + '/', '', root_path)
                         py_file = str(relative_path) + '/' + str(c_file)
 
                     py_list.append(py_file)

@@ -17,8 +17,9 @@ def get_command_dict(command):
     key_list = []
     (return_code, stdout, stderr) = common.run_command(command)
     i = -1
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if line:
@@ -89,8 +90,9 @@ def get_bjobs_info(command='bjobs -u all -w'):
     key_list = []
     (return_code, stdout, stderr) = common.run_command(command)
     i = -1
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if line:
@@ -138,8 +140,9 @@ def get_bhosts_load_info(command='bhosts -l'):
     hostname = ''
     head_list = []
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if re.match(r'^\s*HOST\s+(.+?)\s*$', line):
@@ -160,7 +163,7 @@ def get_bhosts_load_info(command='bhosts -l'):
                 total_load_list = total_load_string.split()
 
                 for (i, head_name) in enumerate(head_list):
-                    load = re.sub(r'\*', '', total_load_list[i])
+                    load = re.sub(r'\*', '', total_load_list[i]) if i < len(total_load_list) else ''
                     bhosts_load_dic[hostname]['Total'].setdefault(head_name, load)
             elif re.match(r'^\s*Reserved\s+(.+?)\s*$', line):
                 bhosts_load_dic[hostname].setdefault('Reserved', {})
@@ -170,7 +173,7 @@ def get_bhosts_load_info(command='bhosts -l'):
                 reserved_load_list = reserved_load_string.split()
 
                 for (i, head_name) in enumerate(head_list):
-                    load = re.sub(r'\*', '', reserved_load_list[i])
+                    load = re.sub(r'\*', '', reserved_load_list[i]) if i < len(reserved_load_list) else ''
                     bhosts_load_dic[hostname]['Reserved'].setdefault(head_name, load)
             else:
                 head_list = line.split()
@@ -223,8 +226,9 @@ def get_lsid_info(command='lsid'):
     cluster = ''
     master = ''
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if re.match(r'^\s*My\s+cluster\s+name\s+is\s+(\S+)\s*$', line):
@@ -323,8 +327,9 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
     pending_mark = False
     lsf_unit_for_limits = get_lsf_unit_for_limits(get_lsf_unit_for_limits_command)
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in stdout.decode('utf-8', 'ignore').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if line:
@@ -426,13 +431,13 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
 
                     # Switch rusage_mem unit into "MB".
                     if lsf_unit_for_limits == 'KB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])/1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) / 1024, 1)
                     elif lsf_unit_for_limits == 'MB':
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']), 1)
                     elif lsf_unit_for_limits == 'GB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024, 1)
                     elif lsf_unit_for_limits == 'TB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024 * 1024, 1)
 
                 if job_compile_dic['specified_hosts_compile'].match(line):
                     my_match = job_compile_dic['specified_hosts_compile'].match(line)
@@ -461,13 +466,13 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
 
                     # Switch mem unit into "MB".
                     if unit == 'Kbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])/1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) / 1024, 1)
                     elif unit == 'Mbytes':
                         my_dic[job]['mem'] = round(float(my_dic[job]['mem']), 1)
                     elif unit == 'Gbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])*1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) * 1024, 1)
                     elif unit == 'Tbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])*1024*1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) * 1024 * 1024, 1)
 
                 if job_compile_dic['swap_compile'].match(line):
                     my_match = job_compile_dic['swap_compile'].match(line)
@@ -476,13 +481,13 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
 
                     # Switch swap unit into "MB".
                     if unit == 'Kbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])/1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) / 1024, 1)
                     elif unit == 'Mbytes':
                         my_dic[job]['swap'] = round(float(my_dic[job]['swap']), 1)
                     elif unit == 'Gbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])*1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) * 1024, 1)
                     elif unit == 'Tbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])*1024*1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) * 1024 * 1024, 1)
 
                 if job_compile_dic['pids_compile'].findall(line):
                     my_match = job_compile_dic['pids_compile'].findall(line)
@@ -505,39 +510,39 @@ def get_lsf_bjobs_uf_info(command='bjobs -u all -UF', get_lsf_unit_for_limits_co
 
                 # Switch max_mem unit into "MB".
                 if unit == 'Kbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])/1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) / 1024, 1)
                 elif unit == 'Mbytes':
                     my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']), 1)
                 elif unit == 'Gbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])*1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) * 1024, 1)
                 elif unit == 'Tbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])*1024*1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) * 1024 * 1024, 1)
 
                 my_dic[job]['avg_mem'] = my_match.group(4)
                 unit = my_match.group(6)
 
                 # Switch avg_mem unit into "MB".
                 if unit == 'Kbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])/1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) / 1024, 1)
                 elif unit == 'Mbytes':
                     my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']), 1)
                 elif unit == 'Gbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) * 1024, 1)
                 elif unit == 'Tbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024*1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) * 1024 * 1024, 1)
             elif (not my_dic[job]['rusage_mem']) and job_compile_dic['effective_rusage_mem_compile'].match(line):
                 my_match = job_compile_dic['effective_rusage_mem_compile'].match(line)
                 my_dic[job]['rusage_mem'] = my_match.group(1)
 
                 # Switch rusage_mem unit into "MB".
                 if lsf_unit_for_limits == 'KB':
-                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])/1024, 1)
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) / 1024, 1)
                 elif lsf_unit_for_limits == 'MB':
                     my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']), 1)
                 elif lsf_unit_for_limits == 'GB':
-                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024, 1)
                 elif lsf_unit_for_limits == 'TB':
-                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
+                    my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024 * 1024, 1)
             else:
                 if run_limit_mark:
                     my_dic[job]['run_limit'].append(line.strip())
@@ -618,8 +623,9 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
     pending_mark = False
     lsf_unit_for_limits = 'MB'
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if line:
@@ -721,13 +727,13 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
 
                     # Switch rusage_mem unit into "MB".
                     if lsf_unit_for_limits == 'KB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])/1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) / 1024, 1)
                     elif lsf_unit_for_limits == 'MB':
                         my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']), 1)
                     elif lsf_unit_for_limits == 'GB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024, 1)
                     elif lsf_unit_for_limits == 'TB':
-                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem'])*1024*1024, 1)
+                        my_dic[job]['rusage_mem'] = round(float(my_dic[job]['rusage_mem']) * 1024 * 1024, 1)
 
                 if job_compile_dic['specified_hosts_compile'].match(line):
                     my_match = job_compile_dic['specified_hosts_compile'].match(line)
@@ -756,13 +762,13 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
 
                     # Switch mem unit into "MB".
                     if unit == 'Kbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])/1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) / 1024, 1)
                     elif unit == 'Mbytes':
                         my_dic[job]['mem'] = round(float(my_dic[job]['mem']), 1)
                     elif unit == 'Gbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])*1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) * 1024, 1)
                     elif unit == 'Tbytes':
-                        my_dic[job]['mem'] = round(float(my_dic[job]['mem'])*1024*1024, 1)
+                        my_dic[job]['mem'] = round(float(my_dic[job]['mem']) * 1024 * 1024, 1)
 
                 if job_compile_dic['swap_compile'].match(line):
                     my_match = job_compile_dic['swap_compile'].match(line)
@@ -771,13 +777,13 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
 
                     # Switch swap unit into "MB".
                     if unit == 'Kbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])/1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) / 1024, 1)
                     elif unit == 'Mbytes':
                         my_dic[job]['swap'] = round(float(my_dic[job]['swap']), 1)
                     elif unit == 'Gbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])*1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) * 1024, 1)
                     elif unit == 'Tbytes':
-                        my_dic[job]['swap'] = round(float(my_dic[job]['swap'])*1024*1024, 1)
+                        my_dic[job]['swap'] = round(float(my_dic[job]['swap']) * 1024 * 1024, 1)
 
                 if job_compile_dic['pids_compile'].findall(line):
                     my_match = job_compile_dic['pids_compile'].findall(line)
@@ -800,26 +806,26 @@ def get_openlava_bjobs_uf_info(command='bjobs -u all -UF'):
 
                 # Switch max_mem unit into "MB".
                 if unit == 'Kbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])/1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) / 1024, 1)
                 elif unit == 'Mbytes':
                     my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']), 1)
                 elif unit == 'Gbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])*1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) * 1024, 1)
                 elif unit == 'Tbytes':
-                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem'])*1024*1024, 1)
+                    my_dic[job]['max_mem'] = round(float(my_dic[job]['max_mem']) * 1024 * 1024, 1)
 
                 my_dic[job]['avg_mem'] = my_match.group(4)
                 unit = my_match.group(6)
 
                 # Switch avg_mem unit into "MB".
                 if unit == 'Kbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])/1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) / 1024, 1)
                 elif unit == 'Mbytes':
                     my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']), 1)
                 elif unit == 'Gbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) * 1024, 1)
                 elif unit == 'Tbytes':
-                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem'])*1024*1024, 1)
+                    my_dic[job]['avg_mem'] = round(float(my_dic[job]['avg_mem']) * 1024 * 1024, 1)
             else:
                 if pending_mark:
                     my_dic[job]['pending_reasons'].append(line.strip())
@@ -880,8 +886,9 @@ def get_bmgroup_info(command='bmgroup -w -r'):
     line_compile = re.compile(r'\s*(\S+)\s+(.+?)\s*(\(.*\))?\s*$')
     mark = False
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if mark and line_compile.match(line):
@@ -907,8 +914,9 @@ def get_queue_host_info(command='bqueues -l', get_hosts_list_command='bhosts -w'
     queue = ''
     (return_code, stdout, stderr) = common.run_command(command)
     bmgroup_dic = get_bmgroup_info(get_bmgroup_info_command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if queue_compile.match(line):
@@ -980,8 +988,9 @@ def get_lsf_unit_for_limits(command='badmin showconf mbd all'):
     """
     lsf_unit_for_limits = 'MB'
     (return_code, stdout, stderr) = common.run_command(command)
+    stdout_str = stdout.decode('utf-8', 'replace') if isinstance(stdout, (bytes, bytearray)) else str(stdout)
 
-    for line in str(stdout, 'utf-8').split('\n'):
+    for line in stdout_str.split('\n'):
         line = line.strip()
 
         if re.match(r'^\s*LSF_UNIT_FOR_LIMITS\s*=\s*(\S+)\s*$', line):
@@ -1002,6 +1011,11 @@ def switch_bjobs_uf_time(bjobs_uf_time, format=''):
         # Switch bjobs_uf_time to start_seconds.
         current_year = datetime.date.today().year
         bjobs_uf_time_list = bjobs_uf_time.split()
+
+        # Guard against malformed time strings (e.g. "Oct 26") that would
+        # otherwise raise IndexError on the fixed indices below.
+        if len(bjobs_uf_time_list) < 4:
+            return new_bjobs_uf_time
 
         current_seconds = time.time()
         bjobs_uf_time_with_year = str(current_year) + ' ' + str(bjobs_uf_time_list[1]) + ' ' + str(bjobs_uf_time_list[2]) + ' ' + str(bjobs_uf_time_list[3])

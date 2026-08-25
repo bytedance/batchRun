@@ -52,6 +52,13 @@ def read_args():
 
     args = parser.parse_args()
 
+    # Reject non-positive parallelism: a value of 0 short-circuits the
+    # ``while self.parallel and ...`` throttle in network_scan(), spawning one
+    # thread per IP at once, which can exhaust resources on a large subnet.
+    if args.parallel <= 0:
+        common.bprint('Parallel must be a positive integer, got "' + str(args.parallel) + '".', level='Error')
+        sys.exit(1)
+
     # Check input_file.
     if not os.path.exists(args.input_file):
         common.bprint('"' + str(args.input_file) + '": No such input file.', level='Error')
@@ -126,14 +133,16 @@ class NetworkScan():
                             common.bprint(line, color='red', display_method=1, indent=9)
                             sys.exit(1)
                         else:
-                            for num in range(init_num, final_num+1):
+                            for num in range(init_num, final_num + 1):
                                 ip = str(pre_ip) + str(num)
                                 input_dic[zone][network].append(ip)
                                 self.output_dic[zone][network].setdefault(ip, {'connectivity': False, 'packet': 0, 'received': 0, 'packet_loss': '', 'rtt_avg': 0.0, 'rtt_unit': ''})
                     elif re.match(r'^(((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3})(25[0-5]|2[0-4]\d|[01]?\d\d?)/(\d+)$', network):
                         # For cidr format.
                         ip_list = list(ipaddress.IPv4Network(network).hosts())
-                        del ip_list[0]
+
+                        if ip_list:
+                            del ip_list[0]
 
                         for ip in ip_list:
                             ip = str(ip)
@@ -238,8 +247,22 @@ class NetworkScan():
     def write_output_file(self):
         self.debug_print('>>> Write output file "' + str(self.output_file) + '" ...')
 
-        with open(self.output_file, 'w') as OF:
-            OF.write(str(json.dumps(self.output_dic, ensure_ascii=False, indent=4)) + '\n')
+        # Write atomically: temp file + rename, so a crash never leaves a
+        # truncated/empty result file that downstream readers would load.
+        tmp_file = str(self.output_file) + '.tmp'
+
+        try:
+            with open(tmp_file, 'w') as OF:
+                OF.write(str(json.dumps(self.output_dic, ensure_ascii=False, indent=4)) + '\n')
+
+            os.replace(tmp_file, self.output_file)
+        except Exception as error:
+            common.bprint('Failed on writing output file "' + str(self.output_file) + '": ' + str(error), level='Error')
+
+            try:
+                os.remove(tmp_file)
+            except OSError:
+                pass
 
     def run(self):
         input_dic = self.parse_input_file()

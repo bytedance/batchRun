@@ -155,14 +155,9 @@ def execute_command(command, dangerous_list, confirm_callback):
     if not command.strip():
         return "Error: empty command."
 
-    tokens = [token for token in re.split(r'[\s|;&<>()`{}\'"$\\]+', command) if token]
-
-    for token in tokens:
-        if (token in dangerous_list) or (os.path.basename(token) in dangerous_list):
-            if not confirm_callback(command):
-                return f"User rejected execution of command: {command}"
-
-            break
+    if _needs_confirmation(command, dangerous_list):
+        if not confirm_callback(command):
+            return f"User rejected execution of command: {command}"
 
     try:
         (return_code, stdout, stderr) = common.run_command(command)
@@ -178,6 +173,52 @@ def execute_command(command, dangerous_list, confirm_callback):
         return output if output.strip() else "(no output)"
     except Exception as e:
         return f"Error executing command: {e}"
+
+
+# Tokens that allow arbitrary code to be smuggled past a word-based denylist
+# (encoding/decoding, command substitution, interpreters with -c/-e). Their
+# presence means the command body cannot be reliably inspected -> require
+# explicit user confirmation.
+_EXEC_SHIM_TOKENS = {
+    'base64', 'basenc', 'xxd', 'od', 'eval', 'exec', 'env', 'xargs',
+    'source', 'perl', 'ruby', 'node', 'awk', 'bc', 'tee',
+}
+
+_INTERPRETERS = {
+    'python', 'python2', 'python3', 'perl', 'ruby', 'node', 'sh', 'bash',
+    'dash', 'zsh', 'csh', 'tcsh',
+}
+_SUBSHELL_RE = re.compile(r'\$\(|`|\$\\')
+
+
+def _needs_confirmation(command, dangerous_list):
+    """Decide whether a command requires explicit user confirmation."""
+    tokens = [token for token in re.split(r'[\s|;&<>()`{}\'"$\\]+', command) if token]
+
+    # 1. Any token (or its basename) on the dangerous list.
+    for token in tokens:
+        if (token in dangerous_list) or (os.path.basename(token) in dangerous_list):
+            return True
+
+    # 2. Obfuscation / execution-shim tokens that can hide arbitrary payloads.
+    for token in tokens:
+        base = os.path.basename(token)
+
+        if base in _EXEC_SHIM_TOKENS:
+            return True
+
+    # 3. Command substitution, backticks or process substitution.
+    if _SUBSHELL_RE.search(command):
+        return True
+
+    # 4. Interpreter invoked with -c / -e (inline code execution).
+    for i, token in enumerate(tokens):
+        if os.path.basename(token) in _INTERPRETERS:
+            for j in range(i + 1, min(i + 4, len(tokens))):
+                if tokens[j] in ('-c', '-e'):
+                    return True
+
+    return False
 
 
 # ============================================================
